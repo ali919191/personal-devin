@@ -398,6 +398,8 @@ Run all tests:
 python -m pytest tests/ -v
 ```
 
+Validation result (test environment): `124 passed in 0.64s`
+
 Manual memory file verification:
 
 ```bash
