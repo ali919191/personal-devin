@@ -56,3 +56,79 @@ class Plan(BaseModel):
             if str(task.id) == task_id:
                 return task
         return None
+
+
+# ---------------------------------------------------------------------------
+# Agent 02 — Planning Engine models
+# ---------------------------------------------------------------------------
+
+
+class TaskNode(BaseModel):
+    """Input task node received from the Task Decomposition Engine (Agent 01).
+
+    Uses plain string IDs so the Planning Engine operates independently of
+    UUID-based internal Agent 01 identifiers.
+    """
+
+    id: str = Field(..., min_length=1, description="Unique task identifier")
+    description: str = Field(..., min_length=1, description="Task description")
+    dependencies: list[str] = Field(
+        default_factory=list,
+        description="IDs of tasks this task depends on",
+    )
+
+    def __str__(self) -> str:
+        """String representation."""
+        return f"TaskNode({self.id})"
+
+    def __repr__(self) -> str:
+        """Detailed representation."""
+        return (
+            f"TaskNode(id={self.id!r}, description={self.description!r}, "
+            f"dependencies={self.dependencies})"
+        )
+
+
+class PlanMetadata(BaseModel):
+    """Metadata summary attached to a generated ExecutionPlan."""
+
+    total_tasks: int = Field(..., ge=0, description="Total number of tasks in the plan")
+    has_cycles: bool = Field(
+        ..., description="Whether the input dependency graph contained cycles"
+    )
+
+
+class ExecutionGroup(BaseModel):
+    """A set of tasks that share no inter-dependencies and can run concurrently."""
+
+    group_id: int = Field(..., ge=0, description="Zero-based group index")
+    task_ids: list[str] = Field(
+        default_factory=list,
+        description="IDs of tasks in this parallelisable execution group",
+    )
+
+
+class ExecutionPlan(BaseModel):
+    """Deterministic execution plan produced by the Planning Engine (Agent 02).
+
+    Output contract::
+
+        {
+            "ordered_tasks": [...],      # topologically sorted TaskNodes
+            "execution_groups": [...],   # grouped by parallelisability
+            "metadata": {
+                "total_tasks": int,
+                "has_cycles": bool
+            }
+        }
+    """
+
+    ordered_tasks: list[TaskNode] = Field(
+        default_factory=list,
+        description="Tasks sorted in topological execution order",
+    )
+    execution_groups: list[ExecutionGroup] = Field(
+        default_factory=list,
+        description="Tasks grouped by parallelisable execution level",
+    )
+    metadata: PlanMetadata = Field(..., description="Plan metadata")
