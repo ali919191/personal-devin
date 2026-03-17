@@ -169,9 +169,8 @@ class TestTaskGraph:
 
         graph.add_task(task1)
 
-        graph.add_dependency(str(task1.id), str(task1.id))
-
-        assert not graph.validate_no_cycles()
+        with pytest.raises(ValueError):
+            graph.add_dependency(str(task1.id), str(task1.id))
 
     def test_cycle_detection_complex(self) -> None:
         """Test cycle detection with complex cycle."""
@@ -210,6 +209,26 @@ class TestTaskGraph:
         assert execution_order[0].name == "Task 1"
         assert execution_order[1].name == "Task 2"
         assert execution_order[2].name == "Task 3"
+
+    def test_topological_sort_is_deterministic(self) -> None:
+        """Test topological sort deterministic ordering when multiple tasks are ready."""
+        graph = TaskGraph()
+        seed = Task(name="Seed", description="Seed", priority=100)
+        high = Task(name="High", description="High", priority=90)
+        medium = Task(name="Medium", description="Medium", priority=80)
+        low = Task(name="Low", description="Low", priority=70)
+
+        for task in [seed, low, medium, high]:
+            graph.add_task(task)
+
+        graph.add_dependency(str(low.id), str(seed.id))
+        graph.add_dependency(str(medium.id), str(seed.id))
+        graph.add_dependency(str(high.id), str(seed.id))
+
+        sorted_ids = graph.topological_sort()
+        sorted_names = [graph.tasks[task_id].name for task_id in sorted_ids]
+
+        assert sorted_names == ["Seed", "High", "Medium", "Low"]
 
 
 class TestTaskDecomposer:
@@ -319,6 +338,13 @@ class TestPlanner:
 
         for task in plan.tasks:
             assert 0 <= task.priority <= 100
+
+    def test_create_plan_rejects_empty_goal(self) -> None:
+        """Test planner rejects empty goals."""
+        planner = Planner()
+
+        with pytest.raises(ValueError):
+            planner.create_plan("   ")
 
     def test_plan_consistency_multiple_calls(self) -> None:
         """Test that the same goal produces consistent plans."""

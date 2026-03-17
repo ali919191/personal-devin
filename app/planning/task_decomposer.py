@@ -1,10 +1,7 @@
 """Task decomposer: converts goals into structured plans."""
 
-from uuid import uuid4
-
 from app.core.logger import get_logger
 from app.planning.models import Plan, Task
-from app.planning.task_graph import TaskGraph
 
 logger = get_logger(__name__)
 

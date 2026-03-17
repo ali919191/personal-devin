@@ -1,140 +1,140 @@
-# personal-devin
-pernonal
+# Personal Devin
 
-## Agent 01 — Task Decomposition Engine
+## Core Mission
 
-A production-grade system for converting natural language goals into structured execution plans with dependency management.
+Personal Devin is a production-focused autonomous engineering system that converts natural-language goals into deterministic execution plans and reliable implementation workflows.
 
-### What was built
+Agent 01 in this repository is the Task Decomposition Engine, responsible for:
+- Turning a user goal into a structured plan.
+- Building and validating a dependency DAG.
+- Producing deterministic task execution order.
 
-Agent 01 is a task decomposition system that transforms high-level goals into actionable, ordered task lists. It:
+## Operating Principles
 
-- **Decomposes natural language goals** into atomic, executable tasks
-- **Builds a Directed Acyclic Graph (DAG)** to represent task dependencies
-- **Validates plans** for circular dependencies and consistency
-- **Determines execution order** using topological sorting
-- **Assigns priorities** to reflect task importance and sequencing
-- **Provides structured metadata** for each task
+- Determinism first: same input and rules produce stable execution order.
+- Explicit dependency management: all task relationships are represented in a DAG.
+- No hidden logic: planning behavior is inspectable in rule definitions and graph code.
+- Production validation: cycle checks, input validation, and test-enforced behavior.
+- Modular architecture: decomposition logic is rule-based and extensible for future LLM augmentation.
+
+## Agent Execution Model
+
+Agent execution follows a strict pipeline:
+1. Receive goal string.
+2. Decompose goal into atomic tasks using rule-based logic.
+3. Build dependency DAG from decomposed tasks.
+4. Validate DAG has no cycles.
+5. Topologically sort tasks in deterministic order.
+6. Return a `Plan` object containing ordered `Task` objects.
+
+Public entrypoint:
+- `create_plan(goal: str) -> Plan` in `app/planning/planner.py`
+
+## Repository Structure
+
+```text
+personal-devin/
+├── app/
+│   ├── core/
+│   │   └── logger.py
+│   └── planning/
+│       ├── models.py
+│       ├── planner.py
+│       ├── task_decomposer.py
+│       └── task_graph.py
+├── tests/
+│   ├── test_basic.py
+│   └── test_task_decomposer.py
+├── README.md
+└── requirements.txt
+```
+
+## Development Workflow
+
+Use a strict delivery workflow for all agent changes:
+1. Branch: create a feature branch from `main`.
+2. Implement: make focused, deterministic, test-covered changes.
+3. Test: run `python -m pytest tests/` locally.
+4. PR: open pull request with implementation summary and test evidence.
+5. CI: require passing checks before merge.
+6. Merge: squash or merge only after review approval and green CI.
+
+## CI Enforcement
+
+All changes should be blocked from merge unless:
+- Unit/integration tests pass.
+- No cycle-detection regressions are introduced.
+- Planner flow remains: decompose -> DAG build -> validate -> return.
+- Public interfaces remain typed and documented.
+
+Recommended minimum CI checks:
+- `python -m pytest tests/`
+- Static lint/type checks as the project evolves.
+
+## Agent 01 - Task Decomposition Engine
+
+### What It Builds
+
+Agent 01 converts a natural-language goal into a typed, validated `Plan` made of atomic `Task` entries with dependencies, priorities, and deterministic execution order.
 
 ### Architecture
 
-The system is organized into four core modules:
+- `app/planning/models.py`
+  - Pydantic models for `Task` and `Plan`.
+  - Strict typing for status, dependencies, metadata, and identifiers.
 
-#### Models (`models.py`)
+- `app/planning/task_decomposer.py`
+  - Rule-based decomposition engine.
+  - Pattern-specific strategies for domains such as API, database, and frontend.
+  - Generic decomposition fallback for unmatched goals.
+  - Designed for future LLM integration by keeping decomposition modular.
 
-- **Task**: Represents a single unit of work with UUID, name, description, dependencies, status, priority, and metadata
-- **Plan**: Collections of ordered tasks with a shared goal and unique identifier
-- Built with Pydantic for validation and serialization
+- `app/planning/task_graph.py`
+  - DAG implementation with:
+    - `add_task(task)`
+    - `add_dependency(task_id, depends_on_id)`
+    - `validate_no_cycles()` using DFS
+    - `topological_sort()` using deterministic Kahn-style ordering
+  - Enforces no self-dependency and consistent ordering of ready tasks.
 
-#### Task Graph (`task_graph.py`)
+- `app/planning/planner.py`
+  - Orchestrates end-to-end planning:
+    1. Decompose
+    2. Build DAG
+    3. Validate DAG
+    4. Return ordered plan
 
-- Implements a Directed Acyclic Graph (DAG) without external dependencies
-- **add_task()**: Add tasks to the graph
-- **add_dependency()**: Establish task relationships
-- **validate_no_cycles()**: Detect circular dependencies using DFS
-- **topological_sort()**: Kahn's algorithm for deterministic task ordering
-- Ensures all dependencies are resolved before execution
+- `app/core/logger.py`
+  - Reusable JSON structured logging.
+  - Standard fields include `timestamp`, `module`, `action`, and `data`.
 
-#### Decomposer (`task_decomposer.py`)
-
-- Rule-based goal decomposition using pattern matching
-- Predefined patterns for common goals (API, database, frontend)
-- Generic fallback for unrecognized goals
-- Modular design supports future LLM-based decomposition
-- Structured logging via JSON format
-
-#### Planner (`planner.py`)
-
-- Orchestrates the complete planning workflow:
-	1. Decomposes goal into tasks
-	2. Builds DAG representation
-	3. Validates for cycles and consistency
-	4. Returns ordered execution plan
-- Public API for plan creation
-
-#### Logger (`app/core/logger.py`)
-
-- Structured JSON logging with consistent fields
-- Timestamps, module names, action types, and custom data
-- Reusable across the entire system
-
-### How to run
+### How To Run
 
 Install dependencies:
+
 ```bash
 pip install -r requirements.txt
 ```
 
 Run tests:
+
 ```bash
-python -m pytest tests/ -v
+python -m pytest tests/
 ```
 
-Run with coverage:
-```bash
-python -m pytest tests/ --cov=app --cov-report=html
-```
-
-### Example usage
+### Example Usage
 
 ```python
 from app.planning.planner import create_plan
 
-# Simple API
 plan = create_plan("Build REST API")
 
-# Access tasks in execution order
 for task in plan.tasks:
-		print(f"{task.priority}: {task.name}")
-		print(f"  Dependencies: {task.dependencies}")
-		print(f"  Description: {task.description}")
-
-# Output:
-# 100: Analyze requirements
-# 90: Design solution
-# 80: Implement solution
-# 70: Test solution
-# 60: Document solution
-```
-
-Advanced usage with planner:
-```python
-from app.planning.planner import Planner
-
-planner = Planner()
-
-# Create plan for complex goal
-plan = planner.create_plan("Build microservices architecture")
-
-print(f"Plan ID: {plan.id}")
-print(f"Goal: {plan.goal}")
-print(f"Total tasks: {len(plan.tasks)}")
-
-# Iterate through tasks in execution order
-for idx, task in enumerate(plan.tasks, 1):
-		print(f"\nTask {idx}: {task.name}")
-		print(f"  Status: {task.status}")
-		print(f"  Priority: {task.priority}")
-		print(f"  Depends on: {task.dependencies}")
+    print(task.name, task.priority, task.dependencies)
 ```
 
 ### Dependencies
 
-Core dependencies (in `requirements.txt`):
-
-- **pytest**: Testing framework
-- **pydantic**: Data validation and serialization
-
-System design uses no external dependencies for the DAG implementation, ensuring minimal footprint and maximum reliability.
-
-### Testing
-
-Comprehensive test suite includes:
-
-- **Models**: Task and Plan creation and validation
-- **DAG**: Cycle detection, topological sorting, dependency management
-- **Decomposition**: Pattern matching for common goals, generic fallback
-- **Planning**: End-to-end workflow validation
-- **Integration**: Full system behavior across multiple scenarios
-
-All tests are deterministic and reproducible.
+Defined in `requirements.txt`:
+- `pydantic`
+- `pytest`

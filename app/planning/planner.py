@@ -33,11 +33,15 @@ class Planner:
         Raises:
             ValueError: If the plan contains cycles or is invalid
         """
-        logger.info("create_plan_started", {"goal": goal})
+        normalized_goal = goal.strip()
+        if not normalized_goal:
+            raise ValueError("Goal must be a non-empty string")
+
+        logger.info("create_plan_started", {"goal": normalized_goal})
 
         # Step 1: Decompose goal
-        logger.debug("decomposing_goal", {"goal": goal})
-        plan = self.decomposer.decompose(goal)
+        logger.debug("decomposing_goal", {"goal": normalized_goal})
+        plan = self.decomposer.decompose(normalized_goal)
         logger.debug("goal_decomposed", {"task_count": len(plan.tasks)})
 
         # Step 2: Build DAG
@@ -66,7 +70,7 @@ class Planner:
 
         logger.debug("dag_validated", {"cycles": 0})
 
-        # Step 4: Get execution order
+        # Step 4: Return plan in deterministic execution order
         try:
             execution_order = graph.get_execution_order()
             plan.tasks = execution_order
@@ -81,26 +85,6 @@ class Planner:
         except ValueError as e:
             logger.error("topological_sort_failed", str(e))
             raise
-
-    def add_task_to_plan(self, plan: Plan, new_task_index: int) -> Plan:
-        """Add a task to an existing plan (helper for dynamic planning)."""
-        logger.debug(
-            "adding_task_to_plan",
-            {"plan_id": str(plan.id), "task_count": len(plan.tasks)},
-        )
-
-        graph = TaskGraph()
-        for task in plan.tasks:
-            graph.add_task(task)
-
-        for task in plan.tasks:
-            for dep_id in task.dependencies:
-                graph.add_dependency(str(task.id), dep_id)
-
-        execution_order = graph.get_execution_order()
-        plan.tasks = execution_order
-
-        return plan
 
 
 def create_plan(goal: str) -> Plan:
