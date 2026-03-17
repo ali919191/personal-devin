@@ -1,6 +1,15 @@
-"""Directed Acyclic Graph construction and topological ordering for the planning engine."""
+"""Directed Acyclic Graph construction and deterministic traversal for planning."""
 
+import heapq
+
+from app.core.logger import get_logger
 from app.planning.models import TaskNode
+
+logger = get_logger(__name__)
+
+
+class PlanningCycleError(ValueError):
+    """Raised when planning encounters a cycle in task dependencies."""
 
 
 class DependencyGraph:
@@ -31,6 +40,8 @@ class DependencyGraph:
         self._adjacency.clear()
         self._in_degree.clear()
 
+        logger.info("graph_build_started", {"task_count": len(tasks)})
+
         for task in tasks:
             self._nodes[task.id] = task
             self._adjacency[task.id] = set()
@@ -41,12 +52,21 @@ class DependencyGraph:
                 self._adjacency[dep_id].add(task.id)
                 self._in_degree[task.id] += 1
 
+        logger.info(
+            "graph_build_completed",
+            {
+                "node_count": len(self._nodes),
+                "edge_count": sum(len(neighbors) for neighbors in self._adjacency.values()),
+            },
+        )
+
     def has_cycle(self) -> bool:
         """Return True if the graph contains a directed cycle.
 
         Uses recursive DFS with a recursion-stack to detect back edges.
         Traversal order over neighbours is sorted for determinism.
         """
+        logger.debug("graph_cycle_check_started", {"node_count": len(self._nodes)})
         visited: set[str] = set()
         rec_stack: set[str] = set()
 
@@ -64,8 +84,60 @@ class DependencyGraph:
 
         for node_id in sorted(self._nodes):
             if node_id not in visited and _dfs(node_id):
+                logger.error("graph_cycle_check_failed", "Dependency cycle detected")
                 return True
+        logger.debug("graph_cycle_check_completed", {"has_cycle": False})
         return False
+
+    def traverse_levels(self) -> tuple[list[str], list[list[str]]]:
+        """Topologically traverse the graph in deterministic level-order.
+
+        Returns both the overall ordered IDs and execution groups produced during
+        traversal. This avoids post-processing groups after sorting.
+        """
+        logger.info("graph_traversal_started", {"node_count": len(self._nodes)})
+
+        if self.has_cycle():
+            raise PlanningCycleError("Cycle detected in task dependencies")
+
+        in_degree = self._in_degree.copy()
+        current_ready: list[str] = [
+            node_id for node_id, degree in in_degree.items() if degree == 0
+        ]
+        heapq.heapify(current_ready)
+
+        ordered: list[str] = []
+        groups: list[list[str]] = []
+
+        while current_ready:
+            level_size = len(current_ready)
+            group: list[str] = []
+            next_ready: list[str] = []
+
+            for _ in range(level_size):
+                node_id = heapq.heappop(current_ready)
+                ordered.append(node_id)
+                group.append(node_id)
+
+                for neighbor in sorted(self._adjacency[node_id]):
+                    in_degree[neighbor] -= 1
+                    if in_degree[neighbor] == 0:
+                        heapq.heappush(next_ready, neighbor)
+
+            groups.append(group)
+            current_ready = next_ready
+
+        if len(ordered) != len(self._nodes):
+            raise PlanningCycleError("Cycle detected in task dependencies")
+
+        logger.info(
+            "graph_traversal_completed",
+            {
+                "ordered_count": len(ordered),
+                "group_count": len(groups),
+            },
+        )
+        return ordered, groups
 
     def topological_sort(self) -> list[str]:
         """Return task IDs in deterministic topological order (Kahn's algorithm).
@@ -79,37 +151,14 @@ class DependencyGraph:
         Raises:
             ValueError: If the graph contains a cycle.
         """
-        if self.has_cycle():
-            raise ValueError("Topological sort failed: graph contains a cycle")
-
-        in_degree = self._in_degree.copy()
-        ready: list[str] = sorted(nid for nid, deg in in_degree.items() if deg == 0)
-        result: list[str] = []
-
-        while ready:
-            node_id = ready.pop(0)
-            result.append(node_id)
-            newly_ready: list[str] = []
-            for neighbor in sorted(self._adjacency[node_id]):
-                in_degree[neighbor] -= 1
-                if in_degree[neighbor] == 0:
-                    newly_ready.append(neighbor)
-            ready = sorted(ready + newly_ready)
-
-        if len(result) != len(self._nodes):
-            raise ValueError(
-                "Topological sort incomplete: unreachable nodes detected"
-            )
-
-        return result
+        ordered_ids, _ = self.traverse_levels()
+        return ordered_ids
 
     def execution_groups(self, sorted_ids: list[str] | None = None) -> list[list[str]]:
-        """Group task IDs by their parallelisable execution level.
+        """Group task IDs by topological levels discovered during traversal.
 
-        Tasks within the same group have no inter-dependencies and can run
-        concurrently. Groups are ordered from independent (level 0) to most
-        dependent (highest level). Task IDs inside each group are sorted
-        alphabetically for determinism.
+        Level 0 contains tasks with no dependencies. Level N contains tasks
+        whose dependencies are all resolved by prior levels.
 
         Args:
             sorted_ids: Pre-computed topological order. If None, computed
@@ -121,23 +170,12 @@ class DependencyGraph:
         Raises:
             ValueError: If the graph contains a cycle.
         """
-        if sorted_ids is None:
-            sorted_ids = self.topological_sort()
-
-        level: dict[str, int] = {}
-        for node_id in sorted_ids:
-            task = self._nodes[node_id]
-            if not task.dependencies:
-                level[node_id] = 0
-            else:
-                level[node_id] = max(level[dep] for dep in task.dependencies) + 1
-
-        max_level = max(level.values()) if level else 0
-        groups: list[list[str]] = []
-        for lvl in range(max_level + 1):
-            group = sorted(nid for nid, lv in level.items() if lv == lvl)
-            if group:
-                groups.append(group)
+        if sorted_ids is not None:
+            logger.debug(
+                "graph_execution_groups_sorted_ids_ignored",
+                {"reason": "groups are computed during level traversal"},
+            )
+        _, groups = self.traverse_levels()
         return groups
 
     @property

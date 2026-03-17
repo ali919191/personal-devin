@@ -6,7 +6,6 @@ from uuid import UUID
 from app.planning.models import Plan, Task
 from app.planning.task_decomposer import TaskDecomposer
 from app.planning.task_graph import TaskGraph
-from app.planning.planner import Planner
 
 
 class TestModels:
@@ -282,30 +281,17 @@ class TestTaskDecomposer:
         assert has_dependencies
 
 
-class TestPlanner:
-    """Test the main planner."""
+class TestIntegration:
+    """Integration tests for decomposition + graph workflow."""
 
-    def test_planner_creation(self) -> None:
-        """Test creating a planner."""
-        planner = Planner()
-        assert planner is not None
-        assert planner.decomposer is not None
+    def test_full_decompose_and_graph_workflow(self) -> None:
+        """Test complete workflow from goal to validated DAG order."""
+        decomposer = TaskDecomposer()
+        plan = decomposer.decompose("Build REST API with database")
 
-    def test_create_plan_simple(self) -> None:
-        """Test creating a simple plan."""
-        planner = Planner()
-        plan = planner.create_plan("Build REST API")
-
-        assert isinstance(plan, Plan)
-        assert plan.goal == "Build REST API"
+        assert plan.goal == "Build REST API with database"
         assert len(plan.tasks) > 0
 
-    def test_create_plan_validates_no_cycles(self) -> None:
-        """Test that planner creates valid plans with no cycles."""
-        planner = Planner()
-        plan = planner.create_plan("Build database")
-
-        # Verify no cycles by checking topological sort succeeds
         graph = TaskGraph()
         for task in plan.tasks:
             graph.add_task(task)
@@ -313,59 +299,8 @@ class TestPlanner:
             for dep_id in task.dependencies:
                 graph.add_dependency(str(task.id), dep_id)
 
-        sorted_ids = graph.topological_sort()
-        assert len(sorted_ids) == len(plan.tasks)
-
-    def test_create_plan_execution_order(self) -> None:
-        """Test that plan tasks are in execution order."""
-        planner = Planner()
-        plan = planner.create_plan("Build REST API")
-
-        # Verify dependencies are satisfied in order
-        for idx, task in enumerate(plan.tasks):
-            for dep_id in task.dependencies:
-                dep_task_idx = next(
-                    (i for i, t in enumerate(plan.tasks) if str(t.id) == dep_id),
-                    None
-                )
-                assert dep_task_idx is not None
-                assert dep_task_idx < idx  # Dependency must come before
-
-    def test_create_plan_tasks_have_priorities(self) -> None:
-        """Test that all tasks have priority."""
-        planner = Planner()
-        plan = planner.create_plan("Build frontend")
-
-        for task in plan.tasks:
-            assert 0 <= task.priority <= 100
-
-    def test_create_plan_rejects_empty_goal(self) -> None:
-        """Test planner rejects empty goals."""
-        planner = Planner()
-
-        with pytest.raises(ValueError):
-            planner.create_plan("   ")
-
-    def test_plan_consistency_multiple_calls(self) -> None:
-        """Test that the same goal produces consistent plans."""
-        planner = Planner()
-        plan1 = planner.create_plan("Build API server")
-        plan2 = planner.create_plan("Build API server")
-
-        assert len(plan1.tasks) == len(plan2.tasks)
-        assert plan1.tasks[0].name == plan2.tasks[0].name
-
-
-class TestIntegration:
-    """Integration tests for the complete system."""
-
-    def test_full_planning_workflow(self) -> None:
-        """Test complete workflow from goal to execution plan."""
-        planner = Planner()
-        plan = planner.create_plan("Build REST API with database")
-
-        assert plan.goal == "Build REST API with database"
-        assert len(plan.tasks) > 0
+        assert graph.validate_no_cycles()
+        assert len(graph.topological_sort()) == len(plan.tasks)
 
         for task in plan.tasks:
             assert task.id is not None
@@ -375,16 +310,26 @@ class TestIntegration:
             assert isinstance(task.dependencies, list)
             assert task.status == "pending"
 
-    def test_plan_execution_order_respected(self) -> None:
+    def test_graph_execution_order_respected(self) -> None:
         """Test that execution order respects all dependencies."""
-        planner = Planner()
-        plan = planner.create_plan("Build a web application")
+        decomposer = TaskDecomposer()
+        plan = decomposer.decompose("Build a web application")
 
-        executed: set[str] = set()
+        graph = TaskGraph()
+        for task in plan.tasks:
+            graph.add_task(task)
         for task in plan.tasks:
             for dep_id in task.dependencies:
+                graph.add_dependency(str(task.id), dep_id)
+
+        ordered_ids = graph.topological_sort()
+
+        executed: set[str] = set()
+        for task_id in ordered_ids:
+            task = graph.tasks[task_id]
+            for dep_id in task.dependencies:
                 assert dep_id in executed, f"Dependency {dep_id} not in executed set"
-            executed.add(str(task.id))
+            executed.add(task_id)
 
     def test_complex_goal_decomposition(self) -> None:
         """Test decomposition of complex goals."""
@@ -396,8 +341,8 @@ class TestIntegration:
             "Implement caching layer",
         ]
 
-        planner = Planner()
+        decomposer = TaskDecomposer()
         for goal in goals:
-            plan = planner.create_plan(goal)
+            plan = decomposer.decompose(goal)
             assert len(plan.tasks) > 0
             assert all(task.priority >= 0 for task in plan.tasks)

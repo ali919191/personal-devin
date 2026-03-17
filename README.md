@@ -17,7 +17,7 @@ Agent 01 in this repository is the Task Decomposition Engine, responsible for:
 - Production validation: cycle checks, input validation, and test-enforced behavior.
 - Modular architecture: decomposition logic is rule-based and extensible for future LLM augmentation.
 
-## Agent Execution Model
+## Agent 01 Execution Model
 
 Agent execution follows a strict pipeline:
 1. Receive goal string.
@@ -27,8 +27,8 @@ Agent execution follows a strict pipeline:
 5. Topologically sort tasks in deterministic order.
 6. Return a `Plan` object containing ordered `Task` objects.
 
-Public entrypoint:
-- `create_plan(goal: str) -> Plan` in `app/planning/planner.py`
+Public entrypoint for Agent 01 decomposition internals:
+- `TaskDecomposer.decompose(goal: str) -> Plan` in `app/planning/task_decomposer.py`
 
 ## Repository Structure
 
@@ -64,7 +64,7 @@ Use a strict delivery workflow for all agent changes:
 All changes should be blocked from merge unless:
 - Unit/integration tests pass.
 - No cycle-detection regressions are introduced.
-- Planner flow remains: decompose -> DAG build -> validate -> return.
+- Planning flow remains deterministic and DAG-validated.
 - Public interfaces remain typed and documented.
 
 Recommended minimum CI checks:
@@ -125,9 +125,10 @@ python -m pytest tests/
 ### Example Usage
 
 ```python
-from app.planning.planner import create_plan
+from app.planning.task_decomposer import TaskDecomposer
 
-plan = create_plan("Build REST API")
+decomposer = TaskDecomposer()
+plan = decomposer.decompose("Build REST API")
 
 for task in plan.tasks:
     print(task.name, task.priority, task.dependencies)
@@ -148,7 +149,10 @@ Defined in `requirements.txt`:
 - DAG-based planning engine that converts structured task lists into deterministic execution plans.
 - Cycle detection with fast-fail on invalid dependency graphs.
 - Deterministic topological sort using Kahn's algorithm with alphabetical ID tie-breaking.
-- Execution grouping: tasks with no inter-dependencies are placed in the same group for future parallel execution.
+- Execution grouping is level-based during topological traversal:
+  - level 0: no dependencies
+  - level 1: depends only on level 0
+  - level N: depends only on prior levels
 - Input validation: catches duplicate task IDs and missing dependency references before planning begins.
 
 ### Architecture decisions
@@ -156,7 +160,7 @@ Defined in `requirements.txt`:
 - **No external graph libraries** — pure Python standard library only.
 - **Deterministic topological sort** — Kahn's algorithm with alphabetical ID order as the tie-breaker ensures identical input always produces identical output.
 - **Separation of responsibilities** — graph construction, validation, and orchestration are intentionally split across three modules.
-- **Backward compatible** — Agent 01 public interfaces (`Planner`, `create_plan`) are unchanged. Agent 02 adds new classes alongside them.
+- **Single public planning interface** — Agent 02 exposes only `build_execution_plan(tasks: list[dict])`.
 - **String-based task IDs** — the planning engine operates on plain string IDs (from the decomposition engine's output contract) rather than internal UUIDs.
 
 ### File structure
@@ -166,12 +170,12 @@ app/planning/
 ├── graph.py        # DependencyGraph: DAG construction, cycle detection, topological sort, execution groups
 ├── validator.py    # PlanValidator: duplicate ID and missing dependency checks
 ├── models.py       # TaskNode, ExecutionPlan, ExecutionGroup, PlanMetadata (Agent 02 schemas, appended)
-└── planner.py      # PlanningEngine + build_execution_plan (added alongside Agent 01 Planner)
+└── planner.py      # build_execution_plan public API and orchestration internals
 
 tests/
 ├── test_graph.py       # DependencyGraph unit tests
 ├── test_validator.py   # PlanValidator unit tests
-└── test_planner.py     # PlanningEngine integration tests
+└── test_planner.py     # build_execution_plan API tests
 ```
 
 ### How to run
@@ -191,14 +195,13 @@ python -m pytest tests/ -v
 ### Example usage
 
 ```python
-from app.planning.models import TaskNode
 from app.planning.planner import build_execution_plan
 
 tasks = [
-    TaskNode(id="design",    description="Design the schema",       dependencies=[]),
-    TaskNode(id="implement", description="Implement the API",       dependencies=["design"]),
-    TaskNode(id="test",      description="Write and run tests",     dependencies=["implement"]),
-    TaskNode(id="docs",      description="Write documentation",     dependencies=["implement"]),
+  {"id": "design", "description": "Design the schema", "dependencies": []},
+  {"id": "implement", "description": "Implement the API", "dependencies": ["design"]},
+  {"id": "test", "description": "Write and run tests", "dependencies": ["implement"]},
+  {"id": "docs", "description": "Write documentation", "dependencies": ["implement"]},
 ]
 
 plan = build_execution_plan(tasks)
@@ -212,7 +215,6 @@ for group in plan.execution_groups:
     print(f"  Group {group.group_id}: {group.task_ids}")
 
 print(f"\nTotal tasks: {plan.metadata.total_tasks}")
-print(f"Has cycles:  {plan.metadata.has_cycles}")
 ```
 
 Output:
@@ -230,7 +232,6 @@ Execution groups (parallelisable):
   Group 2: ['docs', 'test']
 
 Total tasks: 4
-Has cycles:  False
 ```
 
 ### Dependencies

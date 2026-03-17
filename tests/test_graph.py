@@ -168,7 +168,7 @@ class TestTopologicalSort:
 
     def test_raises_on_cycle(self) -> None:
         tasks = [make_task("a", deps=["b"]), make_task("b", deps=["a"])]
-        with pytest.raises(ValueError, match="cycle"):
+        with pytest.raises(ValueError, match="Cycle detected in task dependencies"):
             build_graph(tasks).topological_sort()
 
 
@@ -232,5 +232,5 @@ class TestExecutionGroups:
 
     def test_raises_on_cycle(self) -> None:
         tasks = [make_task("a", deps=["b"]), make_task("b", deps=["a"])]
-        with pytest.raises(ValueError, match="cycle"):
+        with pytest.raises(ValueError, match="Cycle detected in task dependencies"):
             build_graph(tasks).execution_groups()
