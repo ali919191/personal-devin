@@ -248,6 +248,7 @@ Total tasks: 4
 - Per-task lifecycle tracking: `pending → running → completed / failed / skipped`.
 - Two failure modes: `stop_on_failure=True` (default) halts the run after the first failure and skips remaining tasks; `stop_on_failure=False` continues executing independent tasks.
 - Dependency-aware skipping: if a dependency failed or was skipped, its dependent task is automatically skipped.
+- Skipped tasks include explicit reason metadata via `skip_reason` (for example, failed dependency chain propagation).
 - Structured execution report (`ExecutionReport`) containing per-task status, output, error, and timestamps.
 - Step-level and summary JSON logging via a dedicated `ExecutionLogger`.
 
@@ -258,6 +259,42 @@ Total tasks: 4
 - **`Runner` orchestrates** — converts `TaskNode` → `ExecutionTask`, iterates in plan order, delegates to `Executor`, accumulates results.
 - **Pluggable handlers** — callers supply a `dict[task_id, callable]`; tasks without handlers default to a no-op (always succeed, empty output). Enables deterministic simulation and easy testing.
 - **No hidden behaviour** — failure skipping and stop-on-failure logic are explicit in `runner.py`.
+
+### Execution modes
+
+- `stop_on_failure=True` (default): halt after first failed task, mark remaining as skipped.
+- `stop_on_failure=False`: continue executing tasks in plan order; dependent tasks still skip if dependencies fail.
+
+### Deterministic execution guarantee
+
+- No randomness in execution logic.
+- No parallel execution inside the runner.
+- Same input `ExecutionPlan` always produces the same execution order and task-state transitions.
+
+### Handler contract
+
+Task handlers are expected to follow:
+
+`Callable[[ExecutionTask], tuple[bool, str | None]]`
+
+Returns:
+- `success: bool`
+- `message: str | None` (output when success is `True`, error message when `False`)
+
+Backward compatibility:
+- A handler may also return `str` directly, which is treated as successful output.
+
+### ExecutionReport schema
+
+`ExecutionReport` contains:
+- `status`: overall execution status
+- `total_tasks`: int
+- `completed_tasks`: int
+- `failed_tasks`: int
+- `skipped_tasks`: int
+- `tasks`: `list[ExecutionTask]`
+- `started_at`: datetime
+- `completed_at`: datetime
 
 ### File structure
 

@@ -3,7 +3,7 @@
 from collections.abc import Callable
 from datetime import UTC, datetime
 
-from app.execution.executor import Executor
+from app.execution.executor import Executor, TaskHandler
 from app.execution.logger import get_execution_logger
 from app.execution.models import ExecutionReport, ExecutionStatus, ExecutionTask
 from app.planning.models import ExecutionPlan, TaskNode
@@ -43,7 +43,7 @@ class Runner:
     def run(
         self,
         plan: ExecutionPlan,
-        handlers: dict[str, Callable[[ExecutionTask], str]] | None = None,
+        handlers: dict[str, TaskHandler] | None = None,
     ) -> ExecutionReport:
         """Execute all tasks in *plan* in their topological order.
 
@@ -51,9 +51,10 @@ class Runner:
             plan: A validated ExecutionPlan from the Planning Engine. Tasks are
                 consumed in ``ordered_tasks`` order (already topologically sorted).
             handlers: Optional mapping of task ID → callable. Each callable
-                receives the ExecutionTask and must return a string output; it
-                may raise to simulate failure. Tasks without a handler entry
-                use the no-op default (always succeed, empty output).
+                receives the ExecutionTask and returns either:
+                - tuple[success: bool, message: str | None]
+                - string (backward-compatible successful output)
+                Tasks without a handler entry use the no-op default.
 
         Returns:
             ExecutionReport summarising the outcome of every task.
@@ -74,22 +75,26 @@ class Runner:
                 task.status = ExecutionStatus.SKIPPED
                 blocking_dep = self._find_blocking_dependency(task, task_index)
                 if blocking_dep is not None:
-                    task.error = (
+                    task.skip_reason = (
                         f"dependency {blocking_dep!r} did not complete successfully"
                     )
                 else:
-                    task.error = "run halted after previous failure"
-                _logger.log_step_skipped(task, task.error)
+                    task.skip_reason = "run halted after previous failure"
+                task.error = task.skip_reason
+                _logger.log_step_skipped(task, task.skip_reason)
                 continue
 
             # Skip if any dependency failed or was itself skipped.
             blocking_dep = self._find_blocking_dependency(task, task_index)
             if blocking_dep is not None:
                 task.status = ExecutionStatus.SKIPPED
-                task.error = f"dependency {blocking_dep!r} did not complete successfully"
+                task.skip_reason = (
+                    f"dependency {blocking_dep!r} did not complete successfully"
+                )
+                task.error = task.skip_reason
                 _logger.log_step_skipped(
                     task,
-                    task.error,
+                    task.skip_reason,
                 )
                 if self.stop_on_failure:
                     halted = True
@@ -152,7 +157,7 @@ class Runner:
 
 def run_plan(
     plan: ExecutionPlan,
-    handlers: dict[str, Callable[[ExecutionTask], str]] | None = None,
+    handlers: dict[str, TaskHandler] | None = None,
     stop_on_failure: bool = True,
 ) -> ExecutionReport:
     """Convenience function: create a Runner and execute a plan in one call.

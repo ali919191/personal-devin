@@ -35,6 +35,10 @@ class ExecutionTask(BaseModel):
     )
     output: str | None = Field(default=None, description="Task output on success")
     error: str | None = Field(default=None, description="Error message on failure")
+    skip_reason: str | None = Field(
+        default=None,
+        description="Reason this task was skipped (e.g. failed dependency chain)",
+    )
     started_at: datetime | None = Field(default=None, description="Execution start time")
     completed_at: datetime | None = Field(
         default=None, description="Execution completion time"
@@ -56,12 +60,12 @@ class ExecutionReport(BaseModel):
     Output contract::
 
         {
-            "tasks":           [...],        # all ExecutionTask entries with final status
-            "status":          "completed",  # overall run status
+            "status":          "completed" | "failed",
             "total_tasks":     int,
             "completed_tasks": int,
             "failed_tasks":    int,
             "skipped_tasks":   int,
+            "tasks":           [...],
             "started_at":      datetime,
             "completed_at":    datetime | None
         }

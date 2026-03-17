@@ -37,6 +37,20 @@ def make_output(msg: str):
     return handler
 
 
+def tuple_success(msg: str):
+    def handler(task: ExecutionTask) -> tuple[bool, str | None]:
+        return (True, msg)
+
+    return handler
+
+
+def tuple_fail(msg: str):
+    def handler(task: ExecutionTask) -> tuple[bool, str | None]:
+        return (False, msg)
+
+    return handler
+
+
 # ---------------------------------------------------------------------------
 # Executor unit tests
 # ---------------------------------------------------------------------------
@@ -64,6 +78,18 @@ class TestExecutor:
         result = self.executor.execute_task(task, handler=make_output("hello"))
         assert result.output == "hello"
         assert result.status == ExecutionStatus.COMPLETED
+
+    def test_tuple_handler_success_sets_output(self) -> None:
+        task = self._make_task()
+        result = self.executor.execute_task(task, handler=tuple_success("ok"))
+        assert result.status == ExecutionStatus.COMPLETED
+        assert result.output == "ok"
+
+    def test_tuple_handler_failure_marks_failed(self) -> None:
+        task = self._make_task()
+        result = self.executor.execute_task(task, handler=tuple_fail("boom"))
+        assert result.status == ExecutionStatus.FAILED
+        assert result.error == "boom"
 
     def test_failing_handler_marks_failed(self) -> None:
         task = self._make_task()
@@ -171,6 +197,7 @@ class TestRunnerFailedStep:
         plan = make_plan(make_node("t1"), make_node("t2", deps=["t1"]))
         report = run_plan(plan, handlers={"t1": always_fail})
         t2_task = next(t for t in report.tasks if t.id == "t2")
+        assert t2_task.skip_reason is not None
         assert t2_task.error is not None
         assert "did not complete successfully" in t2_task.error
 
