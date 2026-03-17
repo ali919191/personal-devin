@@ -6,3 +6,6 @@ def test_ci_trigger():
 
 def test_ci_registration_final():
     assert True
+
+def test_protection_enforced():
+    assert True
