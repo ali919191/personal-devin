@@ -73,7 +73,7 @@ class TaskNode(BaseModel):
     id: str = Field(..., min_length=1, description="Unique task identifier")
     description: str = Field(..., min_length=1, description="Task description")
     dependencies: list[str] = Field(
-        default_factory=list,
+        ...,
         description="IDs of tasks this task depends on",
     )
 

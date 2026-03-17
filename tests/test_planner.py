@@ -33,7 +33,7 @@ class TestBuildExecutionPlan:
 
     def test_single_public_interface_accepts_dicts(self) -> None:
         plan = build_execution_plan([
-            {"id": "a", "description": "Task A"},
+            {"id": "a", "description": "Task A", "dependencies": []},
             {"id": "b", "description": "Task B", "dependencies": ["a"]},
         ])
         ids = [task.id for task in plan.ordered_tasks]
@@ -72,6 +72,7 @@ class TestBuildExecutionPlan:
         plan1 = build_execution_plan(tasks)
         plan2 = build_execution_plan(tasks)
 
+        assert plan1 == plan2
         assert [task.id for task in plan1.ordered_tasks] == [
             task.id for task in plan2.ordered_tasks
         ]
@@ -124,6 +125,10 @@ class TestBuildExecutionPlan:
     def test_invalid_input_missing_required_fields(self) -> None:
         with pytest.raises(ValueError, match="Invalid task at index 0"):
             build_execution_plan([{"id": "only-id"}])
+
+    def test_invalid_input_missing_dependencies_key(self) -> None:
+        with pytest.raises(ValueError, match="Invalid task at index 0"):
+            build_execution_plan([{"id": "a", "description": "Task A"}])
 
     def test_empty_input(self) -> None:
         plan = build_execution_plan([])
