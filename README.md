@@ -236,3 +236,92 @@ Has cycles:  False
 ### Dependencies
 
 - None beyond what Agent 01 already uses (standard library only for graph logic).
+
+---
+
+## Agent 03 — Execution Engine
+
+### What was built
+
+- Sequential execution engine that takes a validated `ExecutionPlan` from the Planning Engine and runs each task in topological order.
+- Per-task lifecycle tracking: `pending → running → completed / failed / skipped`.
+- Two failure modes: `stop_on_failure=True` (default) halts the run after the first failure and skips remaining tasks; `stop_on_failure=False` continues executing independent tasks.
+- Dependency-aware skipping: if a dependency failed or was skipped, its dependent task is automatically skipped.
+- Structured execution report (`ExecutionReport`) containing per-task status, output, error, and timestamps.
+- Step-level and summary JSON logging via a dedicated `ExecutionLogger`.
+
+### Architecture decisions
+
+- **Clean interface** — the execution layer imports `ExecutionPlan` and `TaskNode` from `app.planning.models` and never modifies planning logic.
+- **Stateless `Executor`** — handles a single task; testable in isolation with a custom `handler` callable.
+- **`Runner` orchestrates** — converts `TaskNode` → `ExecutionTask`, iterates in plan order, delegates to `Executor`, accumulates results.
+- **Pluggable handlers** — callers supply a `dict[task_id, callable]`; tasks without handlers default to a no-op (always succeed, empty output). Enables deterministic simulation and easy testing.
+- **No hidden behaviour** — failure skipping and stop-on-failure logic are explicit in `runner.py`.
+
+### File structure
+
+```text
+app/execution/
+├── __init__.py    # Public API exports
+├── models.py      # ExecutionStatus (Enum), ExecutionTask, ExecutionReport
+├── executor.py    # Executor: single-task execution with handler protocol
+├── runner.py      # Runner: plan orchestration, dep-skip, report building
+└── logger.py      # ExecutionLogger: step-level + summary structured logging
+
+tests/
+└── test_execution_engine.py   # 30 tests across Executor, Runner, report + integration
+```
+
+### How to run
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+Run all tests:
+
+```bash
+python -m pytest tests/ -v
+```
+
+### Example usage
+
+```python
+from app.planning.models import TaskNode
+from app.planning.planner import build_execution_plan
+from app.execution.runner import run_plan
+
+tasks = [
+    TaskNode(id="init",   description="Initialise environment", dependencies=[]),
+    TaskNode(id="build",  description="Build the project",      dependencies=["init"]),
+    TaskNode(id="test",   description="Run test suite",         dependencies=["build"]),
+    TaskNode(id="deploy", description="Deploy to staging",      dependencies=["test"]),
+]
+
+plan   = build_execution_plan(tasks)
+report = run_plan(plan)
+
+print(f"Status:     {report.status}")
+print(f"Completed:  {report.completed_tasks}/{report.total_tasks}")
+
+for task in report.tasks:
+    print(f"  {task.id}: {task.status} | output={task.output!r}")
+```
+
+Output:
+
+```
+Status:     completed
+Completed:  4/4
+  init:   completed | output=''
+  build:  completed | output=''
+  test:   completed | output=''
+  deploy: completed | output=''
+```
+
+### Dependencies
+
+- Standard library only (`datetime`, `enum`, `collections.abc`).
+- Reuses `app.core.logger` and `app.planning.models` from existing layers.
