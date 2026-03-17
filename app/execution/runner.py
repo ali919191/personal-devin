@@ -1,7 +1,7 @@
 """Execution orchestrator: iterates plan steps, calls executor, logs and reports."""
 
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from app.execution.executor import Executor, TaskHandler
 from app.execution.logger import get_execution_logger
@@ -75,11 +75,9 @@ class Runner:
                 task.status = ExecutionStatus.SKIPPED
                 blocking_dep = self._find_blocking_dependency(task, task_index)
                 if blocking_dep is not None:
-                    task.skip_reason = (
-                        f"dependency {blocking_dep!r} did not complete successfully"
-                    )
+                    task.skip_reason = f"dependency_failed:{blocking_dep}"
                 else:
-                    task.skip_reason = "run halted after previous failure"
+                    task.skip_reason = "run_halted_after_failure"
                 task.error = task.skip_reason
                 _logger.log_step_skipped(task, task.skip_reason)
                 continue
@@ -88,9 +86,7 @@ class Runner:
             blocking_dep = self._find_blocking_dependency(task, task_index)
             if blocking_dep is not None:
                 task.status = ExecutionStatus.SKIPPED
-                task.skip_reason = (
-                    f"dependency {blocking_dep!r} did not complete successfully"
-                )
+                task.skip_reason = f"dependency_failed:{blocking_dep}"
                 task.error = task.skip_reason
                 _logger.log_step_skipped(
                     task,
@@ -143,6 +139,10 @@ class Runner:
         else:
             overall = ExecutionStatus.COMPLETED
 
+        completed_at = datetime.now(UTC)
+        if completed_at <= started_at:
+            completed_at = started_at + timedelta(microseconds=1)
+
         return ExecutionReport(
             tasks=tasks,
             status=overall,
@@ -151,7 +151,7 @@ class Runner:
             failed_tasks=failed,
             skipped_tasks=skipped,
             started_at=started_at,
-            completed_at=datetime.now(UTC),
+            completed_at=completed_at,
         )
 
 

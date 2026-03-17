@@ -199,7 +199,8 @@ class TestRunnerFailedStep:
         t2_task = next(t for t in report.tasks if t.id == "t2")
         assert t2_task.skip_reason is not None
         assert t2_task.error is not None
-        assert "did not complete successfully" in t2_task.error
+        assert t2_task.skip_reason == "dependency_failed:t1"
+        assert t2_task.error == "dependency_failed:t1"
 
     def test_failed_task_stores_error_in_report(self) -> None:
         plan = make_plan(make_node("t1"))
@@ -344,7 +345,14 @@ class TestExecutionReport:
         report = run_plan(plan)
         assert report.started_at is not None
         assert report.completed_at is not None
-        assert report.completed_at >= report.started_at
+        assert report.completed_at > report.started_at
+
+    def test_report_timings_populated_on_failure(self) -> None:
+        plan = make_plan(make_node("t1"))
+        report = run_plan(plan, handlers={"t1": always_fail})
+        assert report.started_at is not None
+        assert report.completed_at is not None
+        assert report.completed_at > report.started_at
 
     def test_report_task_statuses_on_success(self) -> None:
         plan = make_plan(make_node("t1"), make_node("t2"))

@@ -248,7 +248,7 @@ Total tasks: 4
 - Per-task lifecycle tracking: `pending → running → completed / failed / skipped`.
 - Two failure modes: `stop_on_failure=True` (default) halts the run after the first failure and skips remaining tasks; `stop_on_failure=False` continues executing independent tasks.
 - Dependency-aware skipping: if a dependency failed or was skipped, its dependent task is automatically skipped.
-- Skipped tasks include explicit reason metadata via `skip_reason` (for example, failed dependency chain propagation).
+- Skipped tasks include explicit reason metadata via `skip_reason` (for example, `dependency_failed:<task_id>`).
 - Structured execution report (`ExecutionReport`) containing per-task status, output, error, and timestamps.
 - Step-level and summary JSON logging via a dedicated `ExecutionLogger`.
 
