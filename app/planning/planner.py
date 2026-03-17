@@ -62,7 +62,7 @@ def _normalize_tasks(raw_tasks: list[dict]) -> list[TaskNode]:
         if not isinstance(raw_task, dict):
             raise ValueError(f"tasks[{index}] must be a dictionary")
         try:
-            normalized.append(TaskNode.model_validate(raw_task))
+            normalized.append(TaskNode.from_dict(raw_task))
         except ValidationError as exc:
             raise ValueError(f"Invalid task at index {index}: {exc}") from exc
 

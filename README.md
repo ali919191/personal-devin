@@ -149,7 +149,10 @@ Defined in `requirements.txt`:
 - DAG-based planning engine that converts structured task lists into deterministic execution plans.
 - Cycle detection with fast-fail on invalid dependency graphs.
 - Deterministic topological sort using Kahn's algorithm with alphabetical ID tie-breaking.
-- Execution grouping: tasks with no inter-dependencies are placed in the same group for future parallel execution.
+- Execution grouping is level-based during topological traversal:
+  - level 0: no dependencies
+  - level 1: depends only on level 0
+  - level N: depends only on prior levels
 - Input validation: catches duplicate task IDs and missing dependency references before planning begins.
 
 ### Architecture decisions
@@ -212,7 +215,6 @@ for group in plan.execution_groups:
     print(f"  Group {group.group_id}: {group.task_ids}")
 
 print(f"\nTotal tasks: {plan.metadata.total_tasks}")
-print(f"Has cycles:  {plan.metadata.has_cycles}")
 ```
 
 Output:
@@ -230,7 +232,6 @@ Execution groups (parallelisable):
   Group 2: ['docs', 'test']
 
 Total tasks: 4
-Has cycles:  False
 ```
 
 ### Dependencies

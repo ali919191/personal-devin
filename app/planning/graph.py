@@ -98,7 +98,7 @@ class DependencyGraph:
         logger.info("graph_traversal_started", {"node_count": len(self._nodes)})
 
         if self.has_cycle():
-            raise PlanningCycleError("Dependency cycle detected in planning graph")
+            raise PlanningCycleError("Cycle detected in task dependencies")
 
         in_degree = self._in_degree.copy()
         current_ready: list[str] = [
@@ -128,7 +128,7 @@ class DependencyGraph:
             current_ready = next_ready
 
         if len(ordered) != len(self._nodes):
-            raise PlanningCycleError("Planning traversal incomplete due to cycle")
+            raise PlanningCycleError("Cycle detected in task dependencies")
 
         logger.info(
             "graph_traversal_completed",
@@ -155,12 +155,10 @@ class DependencyGraph:
         return ordered_ids
 
     def execution_groups(self, sorted_ids: list[str] | None = None) -> list[list[str]]:
-        """Group task IDs by their parallelisable execution level.
+        """Group task IDs by topological levels discovered during traversal.
 
-        Tasks within the same group have no inter-dependencies and can run
-        concurrently. Groups are ordered from independent (level 0) to most
-        dependent (highest level). Task IDs inside each group are sorted
-        alphabetically for determinism.
+        Level 0 contains tasks with no dependencies. Level N contains tasks
+        whose dependencies are all resolved by prior levels.
 
         Args:
             sorted_ids: Pre-computed topological order. If None, computed

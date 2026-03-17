@@ -99,7 +99,7 @@ class TestBuildExecutionPlan:
         assert ids.index("f") < ids.index("g")
 
     def test_cycle_raises_explicit_exception(self) -> None:
-        with pytest.raises(ValueError, match="cycle"):
+        with pytest.raises(ValueError, match="Cycle detected in task dependencies"):
             build_execution_plan([
                 make_task_dict("a", deps=["b"]),
                 make_task_dict("b", deps=["a"]),

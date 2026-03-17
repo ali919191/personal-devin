@@ -77,6 +77,11 @@ class TaskNode(BaseModel):
         description="IDs of tasks this task depends on",
     )
 
+    @classmethod
+    def from_dict(cls, task: dict) -> "TaskNode":
+        """Create TaskNode from plain dictionary input."""
+        return cls.model_validate(task)
+
     def __str__(self) -> str:
         """String representation."""
         return f"TaskNode({self.id})"
@@ -94,12 +99,12 @@ class PlanMetadata(BaseModel):
 
     total_tasks: int = Field(..., ge=0, description="Total number of tasks in the plan")
     has_cycles: bool = Field(
-        ..., description="Whether the input dependency graph contained cycles"
+        ..., description="Always False for successful plans; cycles raise exceptions"
     )
 
 
 class ExecutionGroup(BaseModel):
-    """A set of tasks that share no inter-dependencies and can run concurrently."""
+    """Tasks discovered in the same topological level during traversal."""
 
     group_id: int = Field(..., ge=0, description="Zero-based group index")
     task_ids: list[str] = Field(
