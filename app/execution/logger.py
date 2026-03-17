@@ -27,14 +27,18 @@ class ExecutionLogger:
         """Log that a task has started executing."""
         self._logger.info(
             "execution_step_started",
-            {"task_id": task.id, "description": task.description},
+            {
+                "task_id": task.id,
+                "status": task.status,
+                "description": task.description,
+            },
         )
 
     def log_step_completed(self, task: "ExecutionTask") -> None:
         """Log successful task completion."""
         self._logger.info(
             "execution_step_completed",
-            {"task_id": task.id, "output": task.output},
+            {"task_id": task.id, "status": task.status, "output": task.output},
         )
 
     def log_step_failed(self, task: "ExecutionTask") -> None:
@@ -42,14 +46,14 @@ class ExecutionLogger:
         self._logger.error(
             "execution_step_failed",
             task.error or "unknown error",
-            {"task_id": task.id},
+            {"task_id": task.id, "status": task.status},
         )
 
     def log_step_skipped(self, task: "ExecutionTask", reason: str) -> None:
         """Log that a task was skipped (e.g. a dependency failed)."""
         self._logger.warning(
             "execution_step_skipped",
-            {"task_id": task.id, "reason": reason},
+            {"task_id": task.id, "status": task.status, "reason": reason},
         )
 
     def log_run_summary(self, report: "ExecutionReport") -> None:

@@ -72,16 +72,24 @@ class Runner:
         for task in execution_tasks:
             if halted:
                 task.status = ExecutionStatus.SKIPPED
-                _logger.log_step_skipped(task, "run halted after previous failure")
+                blocking_dep = self._find_blocking_dependency(task, task_index)
+                if blocking_dep is not None:
+                    task.error = (
+                        f"dependency {blocking_dep!r} did not complete successfully"
+                    )
+                else:
+                    task.error = "run halted after previous failure"
+                _logger.log_step_skipped(task, task.error)
                 continue
 
             # Skip if any dependency failed or was itself skipped.
             blocking_dep = self._find_blocking_dependency(task, task_index)
             if blocking_dep is not None:
                 task.status = ExecutionStatus.SKIPPED
+                task.error = f"dependency {blocking_dep!r} did not complete successfully"
                 _logger.log_step_skipped(
                     task,
-                    f"dependency {blocking_dep!r} did not complete successfully",
+                    task.error,
                 )
                 if self.stop_on_failure:
                     halted = True
@@ -151,13 +159,12 @@ def run_plan(
 
     Example::
 
-        from app.planning.models import TaskNode
         from app.planning.planner import build_execution_plan
         from app.execution.runner import run_plan
 
         tasks = [
-            TaskNode(id="step1", description="Initialise", dependencies=[]),
-            TaskNode(id="step2", description="Build",      dependencies=["step1"]),
+            {"id": "step1", "description": "Initialise", "dependencies": []},
+            {"id": "step2", "description": "Build", "dependencies": ["step1"]},
         ]
         plan   = build_execution_plan(tasks)
         report = run_plan(plan)

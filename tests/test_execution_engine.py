@@ -167,6 +167,13 @@ class TestRunnerFailedStep:
         t2_task = next(t for t in report.tasks if t.id == "t2")
         assert t2_task.status == ExecutionStatus.SKIPPED
 
+    def test_skipped_task_contains_reason(self) -> None:
+        plan = make_plan(make_node("t1"), make_node("t2", deps=["t1"]))
+        report = run_plan(plan, handlers={"t1": always_fail})
+        t2_task = next(t for t in report.tasks if t.id == "t2")
+        assert t2_task.error is not None
+        assert "did not complete successfully" in t2_task.error
+
     def test_failed_task_stores_error_in_report(self) -> None:
         plan = make_plan(make_node("t1"))
         report = run_plan(plan, handlers={"t1": always_fail})
@@ -235,6 +242,45 @@ class TestRunnerOrder:
         ]
         plan = make_plan(*nodes)
         run_plan(plan, handlers={n.id: recording_handler for n in nodes})
+
+    def test_same_input_plan_produces_same_execution_order(self) -> None:
+        def make_recorder(out: list[str]):
+            def recorder(task: ExecutionTask) -> str:
+                out.append(task.id)
+                return ""
+
+            return recorder
+
+        plan = make_plan(
+            make_node("root"),
+            make_node("left", deps=["root"]),
+            make_node("right", deps=["root"]),
+            make_node("merge", deps=["left", "right"]),
+        )
+
+        order1: list[str] = []
+        order2: list[str] = []
+
+        run_plan(
+            plan,
+            handlers={
+                "root": make_recorder(order1),
+                "left": make_recorder(order1),
+                "right": make_recorder(order1),
+                "merge": make_recorder(order1),
+            },
+        )
+        run_plan(
+            plan,
+            handlers={
+                "root": make_recorder(order2),
+                "left": make_recorder(order2),
+                "right": make_recorder(order2),
+                "merge": make_recorder(order2),
+            },
+        )
+
+        assert order1 == order2
 
 
 # ---------------------------------------------------------------------------
