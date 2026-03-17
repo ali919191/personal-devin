@@ -313,9 +313,9 @@ class TestPlanningToExecution:
         from app.planning.planner import build_execution_plan
 
         tasks = [
-            TaskNode(id="design", description="Design schema", dependencies=[]),
-            TaskNode(id="build", description="Build API", dependencies=["design"]),
-            TaskNode(id="test", description="Run tests", dependencies=["build"]),
+            {"id": "design", "description": "Design schema", "dependencies": []},
+            {"id": "build", "description": "Build API", "dependencies": ["design"]},
+            {"id": "test", "description": "Run tests", "dependencies": ["build"]},
         ]
         plan = build_execution_plan(tasks)
         report = run_plan(plan)
@@ -328,8 +328,8 @@ class TestPlanningToExecution:
         from app.planning.planner import build_execution_plan
 
         tasks = [
-            TaskNode(id="step1", description="Step 1", dependencies=[]),
-            TaskNode(id="step2", description="Step 2", dependencies=["step1"]),
+            {"id": "step1", "description": "Step 1", "dependencies": []},
+            {"id": "step2", "description": "Step 2", "dependencies": ["step1"]},
         ]
         plan = build_execution_plan(tasks)
         report = run_plan(plan, handlers={"step1": always_fail})
@@ -342,10 +342,14 @@ class TestPlanningToExecution:
         from app.planning.planner import build_execution_plan
 
         tasks = [
-            TaskNode(id="root", description="Root task", dependencies=[]),
-            TaskNode(id="branch_a", description="Branch A", dependencies=["root"]),
-            TaskNode(id="branch_b", description="Branch B", dependencies=["root"]),
-            TaskNode(id="merge", description="Merge", dependencies=["branch_a", "branch_b"]),
+            {"id": "root", "description": "Root task", "dependencies": []},
+            {"id": "branch_a", "description": "Branch A", "dependencies": ["root"]},
+            {"id": "branch_b", "description": "Branch B", "dependencies": ["root"]},
+            {
+                "id": "merge",
+                "description": "Merge",
+                "dependencies": ["branch_a", "branch_b"],
+            },
         ]
         plan = build_execution_plan(tasks)
         report = run_plan(plan)

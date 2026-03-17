@@ -253,7 +253,7 @@ Total tasks: 4
 
 ### Architecture decisions
 
-- **Clean interface** — the execution layer imports `ExecutionPlan` and `TaskNode` from `app.planning.models` and never modifies planning logic.
+- **Clean interface** — execution consumes `ExecutionPlan` from planning without modifying planning internals.
 - **Stateless `Executor`** — handles a single task; testable in isolation with a custom `handler` callable.
 - **`Runner` orchestrates** — converts `TaskNode` → `ExecutionTask`, iterates in plan order, delegates to `Executor`, accumulates results.
 - **Pluggable handlers** — callers supply a `dict[task_id, callable]`; tasks without handlers default to a no-op (always succeed, empty output). Enables deterministic simulation and easy testing.
@@ -290,15 +290,14 @@ python -m pytest tests/ -v
 ### Example usage
 
 ```python
-from app.planning.models import TaskNode
 from app.planning.planner import build_execution_plan
 from app.execution.runner import run_plan
 
 tasks = [
-    TaskNode(id="init",   description="Initialise environment", dependencies=[]),
-    TaskNode(id="build",  description="Build the project",      dependencies=["init"]),
-    TaskNode(id="test",   description="Run test suite",         dependencies=["build"]),
-    TaskNode(id="deploy", description="Deploy to staging",      dependencies=["test"]),
+  {"id": "init", "description": "Initialise environment", "dependencies": []},
+  {"id": "build", "description": "Build the project", "dependencies": ["init"]},
+  {"id": "test", "description": "Run test suite", "dependencies": ["build"]},
+  {"id": "deploy", "description": "Deploy to staging", "dependencies": ["test"]},
 ]
 
 plan   = build_execution_plan(tasks)
