@@ -138,3 +138,101 @@ for task in plan.tasks:
 Defined in `requirements.txt`:
 - `pydantic`
 - `pytest`
+
+---
+
+## Agent 02 — Planning Engine
+
+### What was built
+
+- DAG-based planning engine that converts structured task lists into deterministic execution plans.
+- Cycle detection with fast-fail on invalid dependency graphs.
+- Deterministic topological sort using Kahn's algorithm with alphabetical ID tie-breaking.
+- Execution grouping: tasks with no inter-dependencies are placed in the same group for future parallel execution.
+- Input validation: catches duplicate task IDs and missing dependency references before planning begins.
+
+### Architecture decisions
+
+- **No external graph libraries** — pure Python standard library only.
+- **Deterministic topological sort** — Kahn's algorithm with alphabetical ID order as the tie-breaker ensures identical input always produces identical output.
+- **Separation of responsibilities** — graph construction, validation, and orchestration are intentionally split across three modules.
+- **Backward compatible** — Agent 01 public interfaces (`Planner`, `create_plan`) are unchanged. Agent 02 adds new classes alongside them.
+- **String-based task IDs** — the planning engine operates on plain string IDs (from the decomposition engine's output contract) rather than internal UUIDs.
+
+### File structure
+
+```text
+app/planning/
+├── graph.py        # DependencyGraph: DAG construction, cycle detection, topological sort, execution groups
+├── validator.py    # PlanValidator: duplicate ID and missing dependency checks
+├── models.py       # TaskNode, ExecutionPlan, ExecutionGroup, PlanMetadata (Agent 02 schemas, appended)
+└── planner.py      # PlanningEngine + build_execution_plan (added alongside Agent 01 Planner)
+
+tests/
+├── test_graph.py       # DependencyGraph unit tests
+├── test_validator.py   # PlanValidator unit tests
+└── test_planner.py     # PlanningEngine integration tests
+```
+
+### How to run
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+Run all tests:
+
+```bash
+python -m pytest tests/ -v
+```
+
+### Example usage
+
+```python
+from app.planning.models import TaskNode
+from app.planning.planner import build_execution_plan
+
+tasks = [
+    TaskNode(id="design",    description="Design the schema",       dependencies=[]),
+    TaskNode(id="implement", description="Implement the API",       dependencies=["design"]),
+    TaskNode(id="test",      description="Write and run tests",     dependencies=["implement"]),
+    TaskNode(id="docs",      description="Write documentation",     dependencies=["implement"]),
+]
+
+plan = build_execution_plan(tasks)
+
+print("Ordered tasks:")
+for task in plan.ordered_tasks:
+    print(f"  {task.id}: {task.description}")
+
+print("\nExecution groups (parallelisable):")
+for group in plan.execution_groups:
+    print(f"  Group {group.group_id}: {group.task_ids}")
+
+print(f"\nTotal tasks: {plan.metadata.total_tasks}")
+print(f"Has cycles:  {plan.metadata.has_cycles}")
+```
+
+Output:
+
+```
+Ordered tasks:
+  design: Design the schema
+  implement: Implement the API
+  docs: Write documentation
+  test: Write and run tests
+
+Execution groups (parallelisable):
+  Group 0: ['design']
+  Group 1: ['implement']
+  Group 2: ['docs', 'test']
+
+Total tasks: 4
+Has cycles:  False
+```
+
+### Dependencies
+
+- None beyond what Agent 01 already uses (standard library only for graph logic).
