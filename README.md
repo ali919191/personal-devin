@@ -362,3 +362,50 @@ Completed:  4/4
 
 - Standard library only (`datetime`, `enum`, `collections.abc`).
 - Reuses `app.core.logger` and `app.planning.models` from existing layers.
+
+---
+
+## Agent 04 — Memory System
+
+### What was built
+
+- Deterministic memory subsystem under `app/memory/` for storing execution intelligence.
+- Typed memory records for executions, tasks, failures, and decisions.
+- File-based append-only persistence in `data/memory/` with one JSON file per memory type.
+- Repository abstraction for save/read/query operations.
+- Service API for high-level logging and retrieval helpers (`get_recent`, `get_failures`, `get_patterns`).
+- Schema-safe serialization with explicit datetime conversion and model validation.
+
+### Architecture decisions
+
+- **Typed records first** — all memory entries share a strict base contract (`id`, `timestamp`, `type`, `data`) via Pydantic models.
+- **Deterministic file storage** — records are appended in insertion order; writes are atomic and JSON keys are sorted for stable output.
+- **Layered design** — `memory_store` handles I/O, `repository` handles persistence queries, `service` handles business-level operations.
+- **No external database** — JSON files are used to satisfy deterministic, local, and dependency-light constraints.
+- **Structured observability** — every read/write path logs memory `type`, `id`, and `status` using the shared structured logger.
+
+### How to run
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+Run all tests:
+
+```bash
+python -m pytest tests/ -v
+```
+
+Manual memory file verification:
+
+```bash
+ls data/memory/
+cat data/memory/executions.json
+```
+
+### Dependencies
+
+- No additional third-party dependencies.
+- Reuses existing project dependencies (`pydantic`, `pytest`) and `app.core.logger`.
