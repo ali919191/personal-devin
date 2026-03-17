@@ -3,3 +3,6 @@ def test_ci_pipeline_runs():
 
 def test_ci_trigger():
     assert 1 == 1
+
+def test_ci_registration_final():
+    assert True

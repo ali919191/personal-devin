@@ -1,16 +1,17 @@
-name: CI
-
+name: CI Pipeline
 
 on:
   pull_request:
-    branches: [main]
+    branches:
+      - main
 
 jobs:
-  test:
+  ci-validation:
+    name: ci-validation
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Python
@@ -19,9 +20,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
+        run: pip install -r requirements.txt
 
       - name: Run tests
-        run: |
-          python -m pytest tests/ -v
+        run: python -m pytest tests/ -v
