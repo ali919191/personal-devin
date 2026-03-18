@@ -824,6 +824,26 @@ Failures are categorized deterministically as:
 - Matching is exact string comparison.
 - Frequency threshold for repeated historical failure patterns is `>= 2`.
 
+### Confidence model
+
+Confidence is deterministic and rule-based:
+
+- `failure_pattern`: `0.9`
+- `warning`: `0.7`
+- `optimization`: `0.6`
+
+Confidence does not vary dynamically and is not learned.
+
+### Inefficiency detection
+
+An inefficiency is defined as:
+
+- presence of skipped tasks
+- partial completion (`completed < total`)
+- repeated task retries (if retry fields are present in input)
+
+These signals generate warning or optimization insights.
+
 ### Suggestion generation rules
 
 - Suggestions are derived only from generated insights.

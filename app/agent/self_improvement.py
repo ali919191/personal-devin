@@ -9,6 +9,12 @@ from app.memory.service import MemoryService
 
 logger = get_logger(__name__)
 
+CONFIDENCE_BY_TYPE = {
+    "failure_pattern": 0.9,
+    "warning": 0.7,
+    "optimization": 0.6,
+}
+
 
 class SelfImprovementEngine:
     """Analyzes runs and produces deterministic improvement recommendations."""
@@ -66,6 +72,7 @@ class SelfImprovementEngine:
             completed_tasks=completed_tasks,
             failed_tasks=failed_tasks,
             skipped_tasks=skipped_tasks,
+            tasks=tasks,
         )
         repeated_patterns = self._detect_repeated_patterns(
             failure_causes=failure_causes,
@@ -113,7 +120,7 @@ class SelfImprovementEngine:
                 {
                     "type": "failure_pattern",
                     "message": f"Observed failure cause: {error}",
-                    "confidence": 0.95,
+                    "confidence": CONFIDENCE_BY_TYPE["failure_pattern"],
                     "metadata": {"error": error},
                 }
             )
@@ -133,7 +140,7 @@ class SelfImprovementEngine:
                         f"Repeated {pattern.get('kind', 'pattern')} detected: "
                         f"{pattern.get('value', 'unknown')}"
                     ),
-                    "confidence": 0.9,
+                    "confidence": CONFIDENCE_BY_TYPE["warning"],
                     "metadata": pattern,
                 }
             )
@@ -143,7 +150,7 @@ class SelfImprovementEngine:
                 {
                     "type": "optimization",
                     "message": f"Optimization opportunity: {inefficiency}",
-                    "confidence": 0.8,
+                    "confidence": CONFIDENCE_BY_TYPE["optimization"],
                     "metadata": {"inefficiency": inefficiency},
                 }
             )
@@ -153,7 +160,7 @@ class SelfImprovementEngine:
                 {
                     "type": "optimization",
                     "message": "Run is stable with no immediate optimization flags",
-                    "confidence": 0.85,
+                    "confidence": CONFIDENCE_BY_TYPE["optimization"],
                     "metadata": {"classification": classification},
                 }
             )
@@ -249,6 +256,7 @@ class SelfImprovementEngine:
         completed_tasks: int,
         failed_tasks: int,
         skipped_tasks: int,
+        tasks: list[dict[str, Any]],
     ) -> list[str]:
         inefficiencies: list[str] = []
 
@@ -269,7 +277,21 @@ class SelfImprovementEngine:
         if success_rate < 0.5:
             inefficiencies.append("low_success_rate")
 
+        if self._has_repeated_retries(tasks):
+            inefficiencies.append("repeated_task_retries")
+
         return sorted(inefficiencies)
+
+    def _has_repeated_retries(self, tasks: list[dict[str, Any]]) -> bool:
+        for task in tasks:
+            retry_count = task.get("retry_count")
+            retries = task.get("retries")
+
+            if isinstance(retry_count, int) and retry_count > 1:
+                return True
+            if isinstance(retries, int) and retries > 1:
+                return True
+        return False
 
     def _detect_repeated_patterns(
         self,
@@ -379,6 +401,8 @@ class SelfImprovementEngine:
                     "status": str(task.get("status", "unknown")),
                     "error": task.get("error"),
                     "skip_reason": task.get("skip_reason"),
+                    "retry_count": task.get("retry_count"),
+                    "retries": task.get("retries"),
                 }
             )
 

@@ -132,3 +132,47 @@ def test_empty_input_handling() -> None:
     assert len(result["suggestions"]) >= 1
     assert len(memory.decisions) == 3
     assert memory.decisions[2]["context"]["type"] == "self_improvement_insight"
+
+
+def test_confidence_model_is_fixed() -> None:
+    engine = SelfImprovementEngine(memory_service=StubMemoryService())
+    analysis = {
+        "classification": "partial",
+        "failure_causes": ["boom"],
+        "repeated_patterns": [{"kind": "task_error", "value": "boom", "count": 2}],
+        "inefficiencies": ["skipped_tasks_present"],
+    }
+
+    insights = engine.generate_insights(analysis)
+
+    confidence_by_type = {insight["type"]: insight["confidence"] for insight in insights}
+    assert confidence_by_type["failure_pattern"] == 0.9
+    assert confidence_by_type["warning"] == 0.7
+    assert confidence_by_type["optimization"] == 0.6
+
+
+def test_inefficiency_detects_repeated_task_retries() -> None:
+    engine = SelfImprovementEngine(memory_service=StubMemoryService())
+    run_data = {
+        "status": "partial",
+        "metrics": {"total": 2, "completed": 1, "failed": 1, "skipped": 0},
+        "tasks": [
+            {
+                "id": "task-1",
+                "status": "completed",
+                "error": None,
+                "skip_reason": None,
+                "retry_count": 2,
+            },
+            {
+                "id": "task-2",
+                "status": "failed",
+                "error": "boom",
+                "skip_reason": None,
+            },
+        ],
+    }
+
+    analysis = engine.analyze_run(run_data)
+
+    assert "repeated_task_retries" in analysis["inefficiencies"]
