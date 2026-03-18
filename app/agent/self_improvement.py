@@ -24,6 +24,7 @@ class SelfImprovementEngine:
             analysis = {
                 "classification": "unknown",
                 "failure_causes": [],
+                "failure_classification": [],
                 "inefficiencies": ["missing_run_data"],
                 "repeated_patterns": [],
                 "summary": {
@@ -37,14 +38,16 @@ class SelfImprovementEngine:
             logger.info("self_improvement_analysis_completed", {"classification": "unknown"})
             return analysis
 
-        status = str(run_data.get("status", "unknown"))
-        metrics = run_data.get("metrics", {})
-        tasks = run_data.get("tasks", [])
+        normalized_run_data = self._normalize_run_data(run_data)
 
-        total_tasks = int(metrics.get("total", len(tasks) if isinstance(tasks, list) else 0))
-        completed_tasks = int(metrics.get("completed", 0))
-        failed_tasks = int(metrics.get("failed", 0))
-        skipped_tasks = int(metrics.get("skipped", 0))
+        status = normalized_run_data["status"]
+        metrics = normalized_run_data["metrics"]
+        tasks = normalized_run_data["tasks"]
+
+        total_tasks = int(metrics["total"])
+        completed_tasks = int(metrics["completed"])
+        failed_tasks = int(metrics["failed"])
+        skipped_tasks = int(metrics["skipped"])
 
         if status == "unknown":
             if total_tasks == 0:
@@ -57,18 +60,24 @@ class SelfImprovementEngine:
                 status = "partial"
 
         failure_causes = self._extract_failure_causes(tasks)
+        failure_classification = self._classify_failures(tasks)
         inefficiencies = self._detect_inefficiencies(
             total_tasks=total_tasks,
             completed_tasks=completed_tasks,
             failed_tasks=failed_tasks,
             skipped_tasks=skipped_tasks,
         )
-        repeated_patterns = self._detect_repeated_patterns(failure_causes)
+        repeated_patterns = self._detect_repeated_patterns(
+            failure_causes=failure_causes,
+            tasks=tasks,
+            inefficiencies=inefficiencies,
+        )
 
         success_rate = completed_tasks / total_tasks if total_tasks > 0 else 0.0
         analysis = {
             "classification": status,
             "failure_causes": failure_causes,
+            "failure_classification": failure_classification,
             "inefficiencies": inefficiencies,
             "repeated_patterns": repeated_patterns,
             "summary": {
@@ -109,11 +118,21 @@ class SelfImprovementEngine:
                 }
             )
 
-        for pattern in sorted(repeated_patterns, key=lambda item: (item["error"], item["count"])):
+        for pattern in sorted(
+            repeated_patterns,
+            key=lambda item: (
+                str(item.get("kind", "")),
+                str(item.get("value", "")),
+                int(item.get("count", 0)),
+            ),
+        ):
             insights.append(
                 {
                     "type": "warning",
-                    "message": f"Repeated failure pattern detected: {pattern['error']}",
+                    "message": (
+                        f"Repeated {pattern.get('kind', 'pattern')} detected: "
+                        f"{pattern.get('value', 'unknown')}"
+                    ),
                     "confidence": 0.9,
                     "metadata": pattern,
                 }
@@ -139,8 +158,9 @@ class SelfImprovementEngine:
                 }
             )
 
-        logger.info("self_improvement_insights_generated", {"count": len(insights)})
-        return insights
+        ordered_insights = self._order_insights(insights)
+        logger.info("self_improvement_insights_generated", {"count": len(ordered_insights)})
+        return ordered_insights
 
     def suggest_optimizations(self, insights: list[dict]) -> list[dict]:
         """Map insights to actionable deterministic recommendations."""
@@ -156,7 +176,7 @@ class SelfImprovementEngine:
                         "priority": "high",
                         "suggestion": "Add targeted retry or precondition checks for recurring failures",
                         "target": "execution",
-                        "rationale": message,
+                        "rationale": f"Derived from insight: {message}",
                     }
                 )
             elif insight_type == "optimization":
@@ -165,7 +185,7 @@ class SelfImprovementEngine:
                         "priority": "medium",
                         "suggestion": "Refine task decomposition and execution grouping to reduce inefficiencies",
                         "target": "planning",
-                        "rationale": message,
+                        "rationale": f"Derived from insight: {message}",
                     }
                 )
             else:
@@ -174,7 +194,7 @@ class SelfImprovementEngine:
                         "priority": "medium",
                         "suggestion": "Track repeated warnings in memory and escalate when threshold is exceeded",
                         "target": "memory",
-                        "rationale": message,
+                        "rationale": f"Derived from insight: {message}",
                     }
                 )
 
@@ -188,8 +208,9 @@ class SelfImprovementEngine:
                 }
             )
 
-        logger.info("self_improvement_suggestions_generated", {"count": len(suggestions)})
-        return suggestions
+        ordered_suggestions = self._order_suggestions(suggestions)
+        logger.info("self_improvement_suggestions_generated", {"count": len(ordered_suggestions)})
+        return ordered_suggestions
 
     def process(self, run_data: dict) -> dict:
         """Run the full self-improvement pipeline and persist summaries."""
@@ -250,7 +271,12 @@ class SelfImprovementEngine:
 
         return sorted(inefficiencies)
 
-    def _detect_repeated_patterns(self, failure_causes: list[str]) -> list[dict[str, Any]]:
+    def _detect_repeated_patterns(
+        self,
+        failure_causes: list[str],
+        tasks: list[dict[str, Any]],
+        inefficiencies: list[str],
+    ) -> list[dict[str, Any]]:
         historical_patterns = self._memory.get_patterns()
         repeated: list[dict[str, Any]] = []
 
@@ -262,9 +288,132 @@ class SelfImprovementEngine:
             error = str(pattern.get("error", "unknown"))
             count = int(pattern.get("count", 0))
             if error in current and count > 1:
-                repeated.append({"error": error, "count": count})
+                repeated.append(
+                    {
+                        "kind": "failure_type",
+                        "value": error,
+                        "count": count,
+                    }
+                )
 
-        return repeated
+        task_error_counter: dict[str, int] = {}
+        for task in tasks:
+            error = task.get("error") or task.get("skip_reason")
+            if error:
+                key = str(error)
+                task_error_counter[key] = task_error_counter.get(key, 0) + 1
+
+        for error, count in sorted(task_error_counter.items(), key=lambda item: (item[0], item[1])):
+            if count >= 2:
+                repeated.append(
+                    {
+                        "kind": "task_error",
+                        "value": error,
+                        "count": count,
+                    }
+                )
+
+        inefficiency_counter: dict[str, int] = {}
+        for inefficiency in inefficiencies:
+            inefficiency_counter[inefficiency] = inefficiency_counter.get(inefficiency, 0) + 1
+
+        for inefficiency, count in sorted(
+            inefficiency_counter.items(), key=lambda item: (item[0], item[1])
+        ):
+            if count >= 1:
+                repeated.append(
+                    {
+                        "kind": "inefficiency_signal",
+                        "value": inefficiency,
+                        "count": count,
+                    }
+                )
+
+        return sorted(
+            repeated,
+            key=lambda item: (
+                str(item.get("kind", "")),
+                str(item.get("value", "")),
+                int(item.get("count", 0)),
+            ),
+        )
+
+    def _classify_failures(self, tasks: list[dict[str, Any]]) -> list[dict[str, str]]:
+        categories: list[dict[str, str]] = []
+        for task in tasks:
+            status = str(task.get("status", ""))
+            if status not in {"failed", "skipped"}:
+                continue
+
+            error = str(task.get("error") or "")
+            skip_reason = str(task.get("skip_reason") or "")
+            if skip_reason.startswith("dependency_failed:") or error.startswith("dependency_failed:"):
+                category = "dependency_failure"
+            elif error and error != "None":
+                category = "execution_error"
+            else:
+                category = "unknown_failure"
+
+            categories.append(
+                {
+                    "task_id": str(task.get("id", "unknown")),
+                    "category": category,
+                }
+            )
+
+        return sorted(categories, key=lambda item: (item["category"], item["task_id"]))
+
+    def _normalize_run_data(self, run_data: dict) -> dict[str, Any]:
+        metrics = run_data.get("metrics", {}) if isinstance(run_data.get("metrics"), dict) else {}
+        tasks = run_data.get("tasks", [])
+        if not isinstance(tasks, list):
+            tasks = []
+
+        normalized_tasks: list[dict[str, Any]] = []
+        for task in tasks:
+            if not isinstance(task, dict):
+                continue
+            normalized_tasks.append(
+                {
+                    "id": str(task.get("id", "unknown")),
+                    "status": str(task.get("status", "unknown")),
+                    "error": task.get("error"),
+                    "skip_reason": task.get("skip_reason"),
+                }
+            )
+
+        return {
+            "goal": str(run_data.get("goal", "unknown")),
+            "status": str(run_data.get("status", "unknown")),
+            "metrics": {
+                "total": int(metrics.get("total", len(normalized_tasks))),
+                "completed": int(metrics.get("completed", 0)),
+                "failed": int(metrics.get("failed", 0)),
+                "skipped": int(metrics.get("skipped", 0)),
+            },
+            "tasks": normalized_tasks,
+        }
+
+    def _order_insights(self, insights: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        type_order = {"failure_pattern": 0, "warning": 1, "optimization": 2}
+        return sorted(
+            insights,
+            key=lambda item: (
+                type_order.get(str(item.get("type", "optimization")), 99),
+                str(item.get("message", "")),
+            ),
+        )
+
+    def _order_suggestions(self, suggestions: list[dict[str, str]]) -> list[dict[str, str]]:
+        priority_order = {"high": 0, "medium": 1, "low": 2}
+        return sorted(
+            suggestions,
+            key=lambda item: (
+                priority_order.get(str(item.get("priority", "low")), 99),
+                str(item.get("target", "")),
+                str(item.get("suggestion", "")),
+            ),
+        )
 
     def _persist_results(
         self,
@@ -279,6 +428,7 @@ class SelfImprovementEngine:
             decision="self_improvement_summary",
             reason=f"classification={analysis.get('classification', 'unknown')}",
             context={
+                "type": "self_improvement_summary",
                 "goal": goal,
                 "summary": analysis.get("summary", {}),
                 "classification": analysis.get("classification", "unknown"),
@@ -289,8 +439,10 @@ class SelfImprovementEngine:
             decision="self_improvement_patterns",
             reason=f"repeated_patterns={len(analysis.get('repeated_patterns', []))}",
             context={
+                "type": "self_improvement_pattern",
                 "goal": goal,
                 "failure_causes": analysis.get("failure_causes", []),
+                "failure_classification": analysis.get("failure_classification", []),
                 "repeated_patterns": analysis.get("repeated_patterns", []),
             },
         )
@@ -299,6 +451,7 @@ class SelfImprovementEngine:
             decision="self_improvement_insights",
             reason=f"insights={len(insights)} suggestions={len(suggestions)}",
             context={
+                "type": "self_improvement_insight",
                 "goal": goal,
                 "insights": insights,
                 "suggestions": suggestions,

@@ -67,6 +67,10 @@ def test_failure_detection() -> None:
 
     assert analysis["classification"] == "failure"
     assert analysis["failure_causes"] == ["boom", "dependency_failed:task-1"]
+    assert analysis["failure_classification"] == [
+        {"task_id": "task-2", "category": "dependency_failure"},
+        {"task_id": "task-1", "category": "execution_error"},
+    ]
     assert "low_success_rate" in analysis["inefficiencies"]
 
 
@@ -83,7 +87,9 @@ def test_repeated_pattern_detection() -> None:
 
     analysis = engine.analyze_run(run_data)
 
-    assert analysis["repeated_patterns"] == [{"error": "boom", "count": 3}]
+    assert {"kind": "failure_type", "value": "boom", "count": 3} in analysis[
+        "repeated_patterns"
+    ]
 
 
 def test_deterministic_output_validation() -> None:
@@ -104,6 +110,14 @@ def test_deterministic_output_validation() -> None:
     second = engine.process(run_data)
 
     assert first == second
+    assert [insight["type"] for insight in first["insights"]] == sorted(
+        [insight["type"] for insight in first["insights"]],
+        key=lambda value: {"failure_pattern": 0, "warning": 1, "optimization": 2}[value],
+    )
+    assert [suggestion["priority"] for suggestion in first["suggestions"]] == sorted(
+        [suggestion["priority"] for suggestion in first["suggestions"]],
+        key=lambda value: {"high": 0, "medium": 1, "low": 2}[value],
+    )
 
 
 def test_empty_input_handling() -> None:
@@ -117,3 +131,4 @@ def test_empty_input_handling() -> None:
     assert len(result["insights"]) >= 1
     assert len(result["suggestions"]) >= 1
     assert len(memory.decisions) == 3
+    assert memory.decisions[2]["context"]["type"] == "self_improvement_insight"

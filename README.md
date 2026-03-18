@@ -789,3 +789,78 @@ python -m pytest tests/ -v
 
 - No additional third-party dependencies.
 - Reuses existing project dependencies and shared logger/memory interfaces.
+
+### Input contract
+
+`run_data` must include:
+
+- `goal: str`
+- `status: str`
+- `metrics`:
+  - `total: int`
+  - `completed: int`
+  - `failed: int`
+  - `skipped: int`
+- `tasks: list[dict]` with:
+  - `id: str`
+  - `status: str`
+  - `error: Optional[str]`
+  - `skip_reason: Optional[str]`
+
+### Failure classification
+
+Failures are categorized deterministically as:
+
+- `execution_error`: task has explicit error content.
+- `dependency_failure`: error or skip reason begins with `dependency_failed:`.
+- `unknown_failure`: fallback category when neither rule matches.
+
+### Pattern detection strategy
+
+- A pattern is defined as repeated signals in deterministic categories:
+  - repeated failure types across runs (from memory patterns)
+  - repeated task-level errors in a run
+  - repeated inefficiency signals (for example, skipped tasks present)
+- Matching is exact string comparison.
+- Frequency threshold for repeated historical failure patterns is `>= 2`.
+
+### Suggestion generation rules
+
+- Suggestions are derived only from generated insights.
+- No external inference or model-generated side channels are used.
+- Each suggestion maps to at least one insight and a defined target layer (`planning`, `execution`, `memory`, or `agent`).
+
+### Output ordering
+
+- Insights are sorted by:
+  1. `type` (`failure_pattern` → `warning` → `optimization`)
+  2. `message` (alphabetical)
+- Suggestions are sorted by:
+  1. `priority` (`high` → `medium` → `low`)
+  2. `target` (alphabetical)
+
+### Memory usage
+
+- Reads:
+  - historical patterns via `get_patterns()`
+- Writes (temporary reuse of existing decision interface):
+  - summary (`type = self_improvement_summary`)
+  - patterns (`type = self_improvement_pattern`)
+  - insights (`type = self_improvement_insight`)
+- Insight payload structure:
+
+```json
+{
+  "type": "self_improvement_insight",
+  "insights": [...],
+  "suggestions": [...]
+}
+```
+
+### AgentLoop integration
+
+- `SelfImprovementEngine.process()` is called only after:
+  - execution completes
+  - loop persistence is finished
+- Integration is read-only and must not alter execution results.
+- Exceptions from self-improvement are caught and logged; no unhandled exception is allowed to break the loop result contract.

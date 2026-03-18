@@ -232,12 +232,19 @@ class AgentLoop:
         }
 
         logger.info("self_improvement_started", {"goal": goal})
-        result = self._self_improvement.process(run_data)
-        logger.info(
-            "self_improvement_completed",
-            {
-                "goal": goal,
-                "insights": len(result.get("insights", [])),
-                "suggestions": len(result.get("suggestions", [])),
-            },
-        )
+        try:
+            result = self._self_improvement.process(run_data)
+            logger.info(
+                "self_improvement_completed",
+                {
+                    "goal": goal,
+                    "insights": len(result.get("insights", [])),
+                    "suggestions": len(result.get("suggestions", [])),
+                },
+            )
+        except Exception as exc:
+            logger.error(
+                "self_improvement_failed",
+                error=str(exc),
+                data={"goal": goal},
+            )
