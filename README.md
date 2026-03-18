@@ -430,33 +430,33 @@ It accepts a high-level goal, converts it into a minimal deterministic task stru
 
 ### Architecture decisions
 
-- **No abstraction layers introduced**
+- No abstraction layers introduced
   - Directly uses:
-    - `build_execution_plan`
-    - `run_plan`
-    - `MemoryService`
+    - build_execution_plan
+    - run_plan
+    - MemoryService
 
-- **Deterministic goal normalization**
+- Deterministic goal normalization
   - Raw goals are wrapped into a single explicit task
   - No AI-based parsing or decomposition
 
-- **Strict orchestration boundary**
+- Strict orchestration boundary
   - Planning, execution, and memory modules remain unchanged
   - Agent Loop only coordinates flow
 
-- **Explicit validation model**
+- Explicit validation model
   - Execution outcomes classified as:
     - success
     - partial
     - failure
 
-- **Structured reflection model**
+- Structured reflection model
   - Captures:
     - failed task IDs
     - success rate
     - deterministic notes
 
-- **Comprehensive memory logging**
+- Comprehensive memory logging
   - Execution summaries logged
   - Per-task results logged
   - Failures explicitly recorded
@@ -476,3 +476,19 @@ result = agent.run("Sample goal")
 
 print(result)
 ```
+
+Run tests:
+
+```bash
+pytest tests/ -v
+```
+
+### Dependencies
+
+Planning Engine (app/planning)
+
+Execution Engine (app/execution)
+
+Memory System (app/memory)
+
+Agent schemas (app/agent/schemas.py)
