@@ -956,15 +956,21 @@ It strictly consumes signals from Agent 07 and maps them to controlled, auditabl
 ### Architecture decisions
 
 - No signal generation allowed
+- No signal transformation allowed
 - No metric interpretation
-- Static registry-based mapping
+- No aggregation or normalization
+- No heuristics or scoring logic
+- Static registry-based mapping only
 - Deterministic execution only
 
 ### How to run
 
+```bash
 pytest tests/test_improvement_engine.py
+```
 
 ### Dependencies
 
 Relies on:
+
 - Agent 07 signal contract
