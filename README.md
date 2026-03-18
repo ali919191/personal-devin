@@ -987,6 +987,7 @@ Relies on:
 - Deterministic pipeline execution
 - Explicit dependency wiring via registry
 - No hidden state
+- Canonical run trace ledger in `RunContext.trace` using typed `TraceEntry`
 
 ### How to run
 
