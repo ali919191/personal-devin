@@ -299,16 +299,11 @@ class SelfImprovementEngine:
         tasks: list[dict[str, Any]],
         inefficiencies: list[str],
     ) -> list[dict[str, Any]]:
-        historical_patterns = self._memory.get_patterns()
+        historical_patterns = self._normalize_historical_patterns(self._memory.get_patterns())
         repeated: list[dict[str, Any]] = []
 
         current = set(failure_causes)
-        for pattern in sorted(
-            historical_patterns,
-            key=lambda item: (str(item.get("error", "")), int(item.get("count", 0))),
-        ):
-            error = str(pattern.get("error", "unknown"))
-            count = int(pattern.get("count", 0))
+        for error, count in sorted(historical_patterns.items(), key=lambda item: (item[0], item[1])):
             if error in current and count > 1:
                 repeated.append(
                     {
@@ -359,6 +354,27 @@ class SelfImprovementEngine:
                 int(item.get("count", 0)),
             ),
         )
+
+    def _normalize_historical_patterns(self, patterns: Any) -> dict[str, int]:
+        if not isinstance(patterns, list):
+            return {}
+
+        # Use unique normalized error signals and a non-additive max count to avoid
+        # inflating frequency when append-only memory yields duplicate pattern entries.
+        normalized: dict[str, int] = {}
+        for item in patterns:
+            if not isinstance(item, dict):
+                continue
+
+            error = str(item.get("error", "unknown")).strip() or "unknown"
+            raw_count = item.get("count", 0)
+            count = raw_count if isinstance(raw_count, int) and raw_count >= 0 else 0
+
+            existing = normalized.get(error, 0)
+            if count > existing:
+                normalized[error] = count
+
+        return normalized
 
     def _classify_failures(self, tasks: list[dict[str, Any]]) -> list[dict[str, str]]:
         categories: list[dict[str, str]] = []

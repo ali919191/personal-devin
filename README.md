@@ -877,6 +877,14 @@ These signals generate warning or optimization insights.
 }
 ```
 
+### Memory semantics
+
+Memory is append-only and non-idempotent by design.
+
+Repeated executions of the same input may produce duplicate self-improvement entries.
+
+Pattern detection logic must account for this by evaluating signal frequency carefully rather than relying on raw entry counts.
+
 ### AgentLoop integration
 
 - `SelfImprovementEngine.process()` is called only after:

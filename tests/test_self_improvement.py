@@ -92,6 +92,34 @@ def test_repeated_pattern_detection() -> None:
     ]
 
 
+def test_repeated_pattern_detection_uses_unique_normalized_signals() -> None:
+    memory = StubMemoryService(
+        patterns=[
+            {"error": "boom", "count": 2},
+            {"error": "boom", "count": 2},
+            {"error": " boom ", "count": 9},
+        ]
+    )
+    engine = SelfImprovementEngine(memory_service=memory)
+    run_data = {
+        "status": "failure",
+        "metrics": {"total": 1, "completed": 0, "failed": 1, "skipped": 0},
+        "tasks": [
+            {"id": "task-1", "status": "failed", "error": "boom", "skip_reason": None},
+        ],
+    }
+
+    analysis = engine.analyze_run(run_data)
+
+    matches = [
+        item
+        for item in analysis["repeated_patterns"]
+        if item.get("kind") == "failure_type" and item.get("value") == "boom"
+    ]
+
+    assert matches == [{"kind": "failure_type", "value": "boom", "count": 9}]
+
+
 def test_deterministic_output_validation() -> None:
     memory = StubMemoryService(patterns=[{"error": "boom", "count": 2}])
     engine = SelfImprovementEngine(memory_service=memory)
