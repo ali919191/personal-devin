@@ -828,9 +828,9 @@ Failures are categorized deterministically as:
 
 Confidence is deterministic and rule-based:
 
-- `failure_pattern`: `0.9`
-- `warning`: `0.7`
-- `optimization`: `0.6`
+  failure_pattern: 0.9
+  warning: 0.7
+  optimization: 0.6
 
 Confidence does not vary dynamically and is not learned.
 
@@ -838,9 +838,9 @@ Confidence does not vary dynamically and is not learned.
 
 An inefficiency is defined as:
 
-- presence of skipped tasks
-- partial completion (`completed < total`)
-- repeated task retries (if retry fields are present in input)
+  presence of skipped tasks
+  partial completion (completed < total)
+  repeated task retries (if retry fields are present in input)
 
 These signals generate warning or optimization insights.
 
