@@ -494,3 +494,63 @@ Execution Engine (app/execution)
 Memory System (app/memory)
 
 Agent schemas (app/agent/schemas.py)
+
+---
+
+## Agent 06 — Integrations Layer
+
+### What was built
+
+- Integration abstraction system
+- Registry-based integration management
+- Filesystem + Mock API integrations
+
+### Architecture decisions
+
+- Deterministic integrations only
+- No real external dependencies
+- Registry pattern for extensibility
+
+### How to run
+
+Example manual invocation:
+
+```python
+from pathlib import Path
+
+from app.integrations import FilesystemIntegration, IntegrationRegistry, MockAPIIntegration
+
+registry = IntegrationRegistry()
+registry.register(FilesystemIntegration(root_dir=Path("data/integration_root")))
+registry.register(MockAPIIntegration())
+
+filesystem_result = registry.execute(
+  {
+    "integration": "filesystem",
+    "action": "write_file",
+    "payload": {"path": "notes/hello.txt", "content": "hello"},
+  }
+)
+
+mock_result = registry.execute(
+  {
+    "integration": "mock_api",
+    "action": "GET",
+    "payload": {"endpoint": "/health"},
+  }
+)
+
+print(filesystem_result)
+print(mock_result)
+```
+
+Run tests:
+
+```bash
+python -m pytest tests/ -v
+```
+
+### Dependencies
+
+- No additional third-party dependencies.
+- Reuses existing project dependencies (`pydantic`, `pytest`) and shared logger in `app/core/logger.py`.
