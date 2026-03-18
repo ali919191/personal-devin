@@ -215,6 +215,7 @@ class AgentLoop:
                     "status": task.status.value,
                     "error": task.error,
                     "skip_reason": task.skip_reason,
+                    "dependencies": list(task.dependencies),
                 }
             )
 
@@ -226,6 +227,7 @@ class AgentLoop:
                 "completed": int(metrics["completed"]),
                 "failed": int(metrics["failed"]),
                 "skipped": int(metrics["skipped"]),
+                "actual_parallelism": 1 if run_tasks else 0,
             },
             "tasks": run_tasks,
             "reflection": reflection.model_dump(),

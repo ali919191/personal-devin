@@ -138,9 +138,16 @@ def test_deterministic_output_validation() -> None:
     second = engine.process(run_data)
 
     assert first == second
+    type_order = {
+        "failure_pattern": 0,
+        "structure_signal": 1,
+        "efficiency_signal": 2,
+        "warning": 3,
+        "optimization": 4,
+    }
     assert [insight["type"] for insight in first["insights"]] == sorted(
         [insight["type"] for insight in first["insights"]],
-        key=lambda value: {"failure_pattern": 0, "warning": 1, "optimization": 2}[value],
+        key=lambda value: type_order[value],
     )
     assert [suggestion["priority"] for suggestion in first["suggestions"]] == sorted(
         [suggestion["priority"] for suggestion in first["suggestions"]],
@@ -167,6 +174,8 @@ def test_confidence_model_is_fixed() -> None:
     analysis = {
         "classification": "partial",
         "failure_causes": ["boom"],
+        "structure_signals": ["Graph depth = 3 (linear chain)"],
+        "efficiency_signals": ["Completion efficiency = 0.67 (medium)"],
         "repeated_patterns": [{"kind": "task_error", "value": "boom", "count": 2}],
         "inefficiencies": ["skipped_tasks_present"],
     }
@@ -175,6 +184,8 @@ def test_confidence_model_is_fixed() -> None:
 
     confidence_by_type = {insight["type"]: insight["confidence"] for insight in insights}
     assert confidence_by_type["failure_pattern"] == 0.9
+    assert confidence_by_type["structure_signal"] == 0.8
+    assert confidence_by_type["efficiency_signal"] == 0.75
     assert confidence_by_type["warning"] == 0.7
     assert confidence_by_type["optimization"] == 0.6
 
@@ -204,3 +215,62 @@ def test_inefficiency_detects_repeated_task_retries() -> None:
     analysis = engine.analyze_run(run_data)
 
     assert "repeated_task_retries" in analysis["inefficiencies"]
+
+
+def test_success_run_produces_structure_and_efficiency_signals() -> None:
+    engine = SelfImprovementEngine(memory_service=StubMemoryService())
+    run_data = {
+        "status": "success",
+        "metrics": {
+            "total": 5,
+            "completed": 5,
+            "failed": 0,
+            "skipped": 0,
+            "actual_parallelism": 1,
+        },
+        "tasks": [
+            {"id": "A", "status": "completed", "error": None, "skip_reason": None, "dependencies": []},
+            {"id": "B", "status": "completed", "error": None, "skip_reason": None, "dependencies": ["A"]},
+            {"id": "C", "status": "completed", "error": None, "skip_reason": None, "dependencies": ["B"]},
+            {"id": "D", "status": "completed", "error": None, "skip_reason": None, "dependencies": ["C"]},
+            {"id": "E", "status": "completed", "error": None, "skip_reason": None, "dependencies": ["D"]},
+        ],
+    }
+
+    result = engine.process(run_data)
+
+    insight_types = [insight["type"] for insight in result["insights"]]
+    insight_messages = [insight["message"] for insight in result["insights"]]
+
+    assert "structure_signal" in insight_types
+    assert "efficiency_signal" in insight_types
+    assert any("Graph depth = 5 (linear chain)" in message for message in insight_messages)
+    assert any("Completion efficiency = 1.00 (high)" in message for message in insight_messages)
+    assert all("Run is stable with no immediate optimization flags" != message for message in insight_messages)
+
+
+def test_wide_success_run_reports_parallelism_gap() -> None:
+    engine = SelfImprovementEngine(memory_service=StubMemoryService())
+    run_data = {
+        "status": "success",
+        "metrics": {
+            "total": 4,
+            "completed": 4,
+            "failed": 0,
+            "skipped": 0,
+            "actual_parallelism": 1,
+        },
+        "tasks": [
+            {"id": "A", "status": "completed", "error": None, "skip_reason": None, "dependencies": []},
+            {"id": "B", "status": "completed", "error": None, "skip_reason": None, "dependencies": []},
+            {"id": "C", "status": "completed", "error": None, "skip_reason": None, "dependencies": []},
+            {"id": "D", "status": "completed", "error": None, "skip_reason": None, "dependencies": []},
+        ],
+    }
+
+    result = engine.process(run_data)
+    insight_messages = [insight["message"] for insight in result["insights"]]
+
+    assert "No parallel execution opportunities utilized" in insight_messages
+    assert "Wide graph executed sequentially" in insight_messages
+    assert "Execution efficiency: high but non-parallel" in insight_messages

@@ -11,6 +11,8 @@ logger = get_logger(__name__)
 
 CONFIDENCE_BY_TYPE = {
     "failure_pattern": 0.9,
+    "structure_signal": 0.8,
+    "efficiency_signal": 0.75,
     "warning": 0.7,
     "optimization": 0.6,
 }
@@ -33,6 +35,21 @@ class SelfImprovementEngine:
                 "failure_classification": [],
                 "inefficiencies": ["missing_run_data"],
                 "repeated_patterns": [],
+                "structural_metrics": {
+                    "depth": 0,
+                    "width": 0,
+                    "branching_factor": 0.0,
+                    "dependency_chains": 0,
+                },
+                "execution_metrics": {
+                    "parallelism_potential": 0,
+                    "actual_parallelism": 0,
+                    "parallelism_utilization": 0.0,
+                    "completion_efficiency": 0.0,
+                    "skip_propagation_depth": 0,
+                },
+                "structure_signals": [],
+                "efficiency_signals": [],
                 "summary": {
                     "total_tasks": 0,
                     "completed_tasks": 0,
@@ -79,6 +96,21 @@ class SelfImprovementEngine:
             tasks=tasks,
             inefficiencies=inefficiencies,
         )
+        structural_metrics = self._compute_structural_metrics(tasks)
+        execution_metrics = self._compute_execution_metrics(
+            tasks=tasks,
+            total_tasks=total_tasks,
+            completed_tasks=completed_tasks,
+            skipped_tasks=skipped_tasks,
+            structural_metrics=structural_metrics,
+            run_data=normalized_run_data,
+        )
+        structure_signals = self._derive_structure_signals(structural_metrics)
+        efficiency_signals = self._derive_efficiency_signals(
+            structural_metrics=structural_metrics,
+            execution_metrics=execution_metrics,
+            status=status,
+        )
 
         success_rate = completed_tasks / total_tasks if total_tasks > 0 else 0.0
         analysis = {
@@ -87,6 +119,10 @@ class SelfImprovementEngine:
             "failure_classification": failure_classification,
             "inefficiencies": inefficiencies,
             "repeated_patterns": repeated_patterns,
+            "structural_metrics": structural_metrics,
+            "execution_metrics": execution_metrics,
+            "structure_signals": structure_signals,
+            "efficiency_signals": efficiency_signals,
             "summary": {
                 "total_tasks": total_tasks,
                 "completed_tasks": completed_tasks,
@@ -112,6 +148,8 @@ class SelfImprovementEngine:
         failure_causes = list(analysis.get("failure_causes", []))
         inefficiencies = list(analysis.get("inefficiencies", []))
         repeated_patterns = list(analysis.get("repeated_patterns", []))
+        structure_signals = list(analysis.get("structure_signals", []))
+        efficiency_signals = list(analysis.get("efficiency_signals", []))
 
         insights: list[dict[str, Any]] = []
 
@@ -142,6 +180,26 @@ class SelfImprovementEngine:
                     ),
                     "confidence": CONFIDENCE_BY_TYPE["warning"],
                     "metadata": pattern,
+                }
+            )
+
+        for signal in sorted(structure_signals):
+            insights.append(
+                {
+                    "type": "structure_signal",
+                    "message": signal,
+                    "confidence": CONFIDENCE_BY_TYPE["structure_signal"],
+                    "metadata": {"signal": signal},
+                }
+            )
+
+        for signal in sorted(efficiency_signals):
+            insights.append(
+                {
+                    "type": "efficiency_signal",
+                    "message": signal,
+                    "confidence": CONFIDENCE_BY_TYPE["efficiency_signal"],
+                    "metadata": {"signal": signal},
                 }
             )
 
@@ -182,6 +240,24 @@ class SelfImprovementEngine:
                     {
                         "priority": "high",
                         "suggestion": "Add targeted retry or precondition checks for recurring failures",
+                        "target": "execution",
+                        "rationale": f"Derived from insight: {message}",
+                    }
+                )
+            elif insight_type == "structure_signal":
+                suggestions.append(
+                    {
+                        "priority": "medium",
+                        "suggestion": "Adjust decomposition to balance dependency depth and expand safe parallel branches",
+                        "target": "planning",
+                        "rationale": f"Derived from insight: {message}",
+                    }
+                )
+            elif insight_type == "efficiency_signal":
+                suggestions.append(
+                    {
+                        "priority": "medium",
+                        "suggestion": "Align execution strategy with available parallelism to improve throughput",
                         "target": "execution",
                         "rationale": f"Derived from insight: {message}",
                     }
@@ -419,6 +495,7 @@ class SelfImprovementEngine:
                     "skip_reason": task.get("skip_reason"),
                     "retry_count": task.get("retry_count"),
                     "retries": task.get("retries"),
+                    "dependencies": self._normalize_dependencies(task.get("dependencies", [])),
                 }
             )
 
@@ -430,12 +507,234 @@ class SelfImprovementEngine:
                 "completed": int(metrics.get("completed", 0)),
                 "failed": int(metrics.get("failed", 0)),
                 "skipped": int(metrics.get("skipped", 0)),
+                "actual_parallelism": int(metrics.get("actual_parallelism", 1))
+                if normalized_tasks
+                else 0,
             },
             "tasks": normalized_tasks,
         }
 
+    def _normalize_dependencies(self, dependencies: Any) -> list[str]:
+        if not isinstance(dependencies, list):
+            return []
+        return sorted(str(dep) for dep in dependencies)
+
+    def _compute_structural_metrics(self, tasks: list[dict[str, Any]]) -> dict[str, Any]:
+        if not tasks:
+            return {
+                "depth": 0,
+                "width": 0,
+                "branching_factor": 0.0,
+                "dependency_chains": 0,
+            }
+
+        task_map = {str(task.get("id", "unknown")): task for task in tasks}
+        children: dict[str, list[str]] = {task_id: [] for task_id in task_map}
+
+        for task_id, task in task_map.items():
+            for dep in task.get("dependencies", []):
+                if dep in children:
+                    children[dep].append(task_id)
+
+        level_cache: dict[str, int] = {}
+
+        def level(task_id: str, stack: set[str]) -> int:
+            if task_id in level_cache:
+                return level_cache[task_id]
+            if task_id in stack:
+                return 0
+
+            stack.add(task_id)
+            task = task_map[task_id]
+            dep_levels = [
+                level(dep, stack)
+                for dep in task.get("dependencies", [])
+                if isinstance(dep, str) and dep in task_map
+            ]
+            stack.remove(task_id)
+            computed = (max(dep_levels) + 1) if dep_levels else 1
+            level_cache[task_id] = computed
+            return computed
+
+        for task_id in sorted(task_map):
+            level(task_id, set())
+
+        levels = list(level_cache.values())
+        depth = max(levels) if levels else 0
+        width_counter: dict[int, int] = {}
+        for current in levels:
+            width_counter[current] = width_counter.get(current, 0) + 1
+        width = max(width_counter.values()) if width_counter else 0
+
+        out_degrees = [len(children[task_id]) for task_id in sorted(children)]
+        branch_nodes = [degree for degree in out_degrees if degree > 0]
+        if branch_nodes:
+            branching_factor = sum(branch_nodes) / len(branch_nodes)
+        else:
+            branching_factor = 0.0
+
+        roots = [
+            task_id
+            for task_id, task in sorted(task_map.items())
+            if not [dep for dep in task.get("dependencies", []) if dep in task_map]
+        ]
+        leaves = [task_id for task_id, degree in sorted((k, len(v)) for k, v in children.items()) if degree == 0]
+
+        dependency_chains = len(roots) * len(leaves) if roots and leaves else 0
+
+        return {
+            "depth": depth,
+            "width": width,
+            "branching_factor": round(branching_factor, 2),
+            "dependency_chains": dependency_chains,
+        }
+
+    def _compute_execution_metrics(
+        self,
+        tasks: list[dict[str, Any]],
+        total_tasks: int,
+        completed_tasks: int,
+        skipped_tasks: int,
+        structural_metrics: dict[str, Any],
+        run_data: dict[str, Any],
+    ) -> dict[str, Any]:
+        if total_tasks <= 0:
+            return {
+                "parallelism_potential": 0,
+                "actual_parallelism": 0,
+                "parallelism_utilization": 0.0,
+                "completion_efficiency": 0.0,
+                "skip_propagation_depth": 0,
+            }
+
+        potential = int(structural_metrics.get("width", 1))
+        metrics = run_data.get("metrics", {}) if isinstance(run_data.get("metrics"), dict) else {}
+        raw_actual = metrics.get("actual_parallelism", 1)
+        actual_parallelism = raw_actual if isinstance(raw_actual, int) and raw_actual > 0 else 1
+        if actual_parallelism > potential:
+            actual_parallelism = potential
+
+        completion_efficiency = completed_tasks / total_tasks
+        parallelism_utilization = actual_parallelism / potential if potential > 0 else 0.0
+        skip_propagation_depth = self._compute_skip_propagation_depth(tasks) if skipped_tasks > 0 else 0
+
+        return {
+            "parallelism_potential": potential,
+            "actual_parallelism": actual_parallelism,
+            "parallelism_utilization": round(parallelism_utilization, 2),
+            "completion_efficiency": round(completion_efficiency, 2),
+            "skip_propagation_depth": skip_propagation_depth,
+        }
+
+    def _compute_skip_propagation_depth(self, tasks: list[dict[str, Any]]) -> int:
+        skipped_by_id: dict[str, str] = {}
+        for task in tasks:
+            status = str(task.get("status", ""))
+            task_id = str(task.get("id", "unknown"))
+            skip_reason = str(task.get("skip_reason") or "")
+            if status == "skipped" and skip_reason.startswith("dependency_failed:"):
+                skipped_by_id[task_id] = skip_reason.split(":", 1)[1]
+
+        depth_cache: dict[str, int] = {}
+
+        def depth(task_id: str, stack: set[str]) -> int:
+            if task_id in depth_cache:
+                return depth_cache[task_id]
+            if task_id in stack:
+                return 1
+
+            parent = skipped_by_id.get(task_id)
+            if not parent:
+                depth_cache[task_id] = 1
+                return 1
+
+            stack.add(task_id)
+            computed = 1 + depth(parent, stack)
+            stack.remove(task_id)
+            depth_cache[task_id] = computed
+            return computed
+
+        if not skipped_by_id:
+            return 0
+
+        return max(depth(task_id, set()) for task_id in sorted(skipped_by_id))
+
+    def _derive_structure_signals(self, structural_metrics: dict[str, Any]) -> list[str]:
+        depth = int(structural_metrics.get("depth", 0))
+        width = int(structural_metrics.get("width", 0))
+        branching_factor = float(structural_metrics.get("branching_factor", 0.0))
+        dependency_chains = int(structural_metrics.get("dependency_chains", 0))
+
+        if depth == 0:
+            return []
+
+        if width == 1:
+            shape = "linear chain"
+        elif branching_factor > 1.0:
+            shape = "branched graph"
+        else:
+            shape = "layered graph"
+
+        signals = [
+            f"Graph depth = {depth} ({shape})",
+            (
+                f"Graph width = {width}; branching factor = {branching_factor:.2f}; "
+                f"dependency chains = {dependency_chains}"
+            ),
+        ]
+
+        if depth >= 4:
+            signals.append("High dependency chain depth increases fragility")
+
+        return sorted(signals)
+
+    def _derive_efficiency_signals(
+        self,
+        structural_metrics: dict[str, Any],
+        execution_metrics: dict[str, Any],
+        status: str,
+    ) -> list[str]:
+        width = int(structural_metrics.get("width", 0))
+        potential = int(execution_metrics.get("parallelism_potential", 0))
+        actual = int(execution_metrics.get("actual_parallelism", 0))
+        completion_efficiency = float(execution_metrics.get("completion_efficiency", 0.0))
+        skip_propagation_depth = int(execution_metrics.get("skip_propagation_depth", 0))
+
+        if potential == 0:
+            return []
+
+        if completion_efficiency >= 0.9:
+            efficiency_label = "high"
+        elif completion_efficiency >= 0.5:
+            efficiency_label = "medium"
+        else:
+            efficiency_label = "low"
+
+        signals = [
+            f"Completion efficiency = {completion_efficiency:.2f} ({efficiency_label})",
+        ]
+
+        if potential > 1 and actual <= 1:
+            signals.append("No parallel execution opportunities utilized")
+            if width >= 3:
+                signals.append("Wide graph executed sequentially")
+
+        if status == "success" and completion_efficiency >= 0.9 and potential > 1 and actual <= 1:
+            signals.append("Execution efficiency: high but non-parallel")
+
+        if skip_propagation_depth > 0:
+            signals.append(f"Skip propagation depth = {skip_propagation_depth}")
+
+        return sorted(signals)
+
     def _order_insights(self, insights: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        type_order = {"failure_pattern": 0, "warning": 1, "optimization": 2}
+        type_order = {
+            "failure_pattern": 0,
+            "structure_signal": 1,
+            "efficiency_signal": 2,
+            "warning": 3,
+            "optimization": 4,
+        }
         return sorted(
             insights,
             key=lambda item: (

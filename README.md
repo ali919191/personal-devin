@@ -747,6 +747,10 @@ Only merge if:
 - Structured pipeline: analyze run data, generate insights, and produce optimization suggestions.
 - Memory-backed pattern awareness using existing memory interfaces only.
 - Light AgentLoop hook that executes self-improvement after execution persistence.
+- Agent 07.5 execution quality analyzer signals for successful and partial runs:
+  - structural metrics (depth, width, branching factor, dependency chains)
+  - execution metrics (parallelism potential vs actual, completion efficiency, skip propagation depth)
+  - deterministic derived signals for structure and efficiency quality.
 
 ### Architecture decisions
 
@@ -801,11 +805,36 @@ python -m pytest tests/ -v
   - `completed: int`
   - `failed: int`
   - `skipped: int`
+  - `actual_parallelism: int` (optional; defaults to sequential execution)
 - `tasks: list[dict]` with:
   - `id: str`
   - `status: str`
   - `error: Optional[str]`
   - `skip_reason: Optional[str]`
+  - `dependencies: list[str]` (optional)
+
+### Structural and execution metrics
+
+- Structural metrics:
+  - `depth`
+  - `width`
+  - `branching_factor`
+  - `dependency_chains`
+- Execution metrics:
+  - `parallelism_potential`
+  - `actual_parallelism`
+  - `parallelism_utilization`
+  - `completion_efficiency`
+  - `skip_propagation_depth`
+
+### Derived signals
+
+- Example deterministic derived signals:
+  - `Graph depth = 5 (linear chain)`
+  - `No parallel execution opportunities utilized`
+  - `Wide graph executed sequentially`
+  - `Execution efficiency: high but non-parallel`
+  - `High dependency chain depth increases fragility`
 
 ### Failure classification
 
@@ -829,6 +858,8 @@ Failures are categorized deterministically as:
 Confidence is deterministic and rule-based:
 
   failure_pattern: 0.9
+  structure_signal: 0.8
+  efficiency_signal: 0.75
   warning: 0.7
   optimization: 0.6
 
@@ -853,7 +884,7 @@ These signals generate warning or optimization insights.
 ### Output ordering
 
 - Insights are sorted by:
-  1. `type` (`failure_pattern` → `warning` → `optimization`)
+  1. `type` (`failure_pattern` → `structure_signal` → `efficiency_signal` → `warning` → `optimization`)
   2. `message` (alphabetical)
 - Suggestions are sorted by:
   1. `priority` (`high` → `medium` → `low`)
