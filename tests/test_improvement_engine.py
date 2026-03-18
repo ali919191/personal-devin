@@ -105,3 +105,15 @@ def test_apply_marks_all_actions_as_applied() -> None:
         "optimize_execution",
     ]
     assert [result.status for result in results] == ["applied", "applied"]
+
+
+def test_duplicate_signals_produce_duplicate_actions() -> None:
+    engine = ImprovementEngine()
+    signals = [
+        SignalRecord(signal_type="low_success_rate", signal_value="0.3"),
+        SignalRecord(signal_type="low_success_rate", signal_value="0.3"),
+    ]
+
+    actions = engine.select_actions(signals)
+
+    assert len(actions) == 2
