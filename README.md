@@ -942,3 +942,35 @@ Pattern detection logic must account for this by evaluating signal frequency car
   - loop persistence is finished
 - Integration is read-only and must not alter execution results.
 - Exceptions from self-improvement are caught and logged; no unhandled exception is allowed to break the loop result contract.
+
+## Agent 08 — Self-Improvement Engine
+
+### What was built
+
+A deterministic improvement engine that converts reflection signals into predefined system actions.
+
+This agent does NOT generate intelligence.
+
+It strictly consumes signals from Agent 07 and maps them to controlled, auditable system responses.
+
+### Architecture decisions
+
+- No signal generation allowed
+- No signal transformation allowed
+- No metric interpretation
+- No aggregation or normalization
+- No heuristics or scoring logic
+- Static registry-based mapping only
+- Deterministic execution only
+
+### How to run
+
+```bash
+pytest tests/test_improvement_engine.py
+```
+
+### Dependencies
+
+Relies on:
+
+- Agent 07 signal contract
