@@ -974,3 +974,80 @@ pytest tests/test_improvement_engine.py
 Relies on:
 
 - Agent 07 signal contract
+
+## Agent 09 — Orchestration Engine
+
+### What was built
+
+- Central orchestration layer coordinating all system components
+- End-to-end pipeline: PLAN → EXECUTE → STORE → REFLECT → IMPROVE
+
+### Architecture decisions
+
+- Deterministic pipeline execution
+- Explicit dependency wiring via registry
+- No hidden state
+- Canonical run trace ledger in `RunContext.trace` using typed `TraceEntry`
+
+### Execution semantics
+
+- Planning failure → pipeline aborts immediately (no execution, memory, or improvement)
+- Execution failure → captured as failure result, pipeline continues to:
+  - memory storage
+  - reflection (Agent Loop)
+  - improvement
+
+### Determinism guarantees
+
+- No randomness (no uuid/random usage)
+- Stable execution ordering
+- Deterministic trace generation
+- Same input → same output (including trace)
+
+### Run trace
+
+Each run produces a deterministic trace stored in `RunContext.trace`.
+
+Each entry includes:
+- stage: one of [planning, execution, memory_store, reflection, improvement]
+- status: start | completed | error
+- step: deterministic sequence counter
+- metadata: stage-specific data (including error details when applicable)
+
+This enables:
+- replayability
+- debugging
+- deterministic comparisons
+- input for self-improvement
+
+### Observability
+
+All stages emit structured logs with:
+- stage
+- status
+- run_id
+- metadata
+
+Logs are machine-readable and aligned with trace entries.
+
+### How to run
+
+Example usage:
+
+```python
+from app.orchestration import Orchestrator, OrchestrationRequest
+
+orchestrator = Orchestrator()
+result = orchestrator.run(
+  OrchestrationRequest(
+    run_id="run-001",
+    goal="Ship feature",
+  )
+)
+
+print(result.status)
+```
+
+Dependencies
+
+Planning, Execution, Memory, Agent Loop, Improvement Engine
