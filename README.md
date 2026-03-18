@@ -474,19 +474,5 @@ from app.agent.agent_loop import AgentLoop
 agent = AgentLoop()
 result = agent.run("Sample goal")
 
-print(result.status)
-print(result.reflection)
-
-Run tests:
-
-pytest tests/ -v
-
-Dependencies
-
-Planning Engine (app/planning)
-
-Execution Engine (app/execution)
-
-Memory System (app/memory)
-
-Agent schemas (app/agent/schemas.py)
+print(result)
+```
