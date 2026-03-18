@@ -980,6 +980,7 @@ Relies on:
 ### What was built
 
 - Central orchestration layer coordinating all system components
+- End-to-end pipeline: PLAN → EXECUTE → STORE → REFLECT → IMPROVE
 
 ### Architecture decisions
 
