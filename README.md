@@ -736,3 +736,209 @@ Only merge if:
 ✅ README section exists exactly as above
 
 ✅ No core modules modified
+
+---
+
+## Agent 07 — Self-Improvement Engine
+
+### What was built
+
+- Deterministic self-improvement engine at `app/agent/self_improvement.py`.
+- Structured pipeline: analyze run data, generate insights, and produce optimization suggestions.
+- Memory-backed pattern awareness using existing memory interfaces only.
+- Light AgentLoop hook that executes self-improvement after execution persistence.
+- Agent 07.5 execution quality analyzer signals for successful and partial runs:
+  - structural metrics (depth, width, branching factor, dependency chains)
+  - execution metrics (parallelism potential vs actual, completion efficiency, skip propagation depth)
+  - deterministic derived signals for structure and efficiency quality.
+
+### Architecture decisions
+
+- Read-only analysis model: no code mutation and no automated patching.
+- Deterministic outputs: no randomness, fixed confidence values, and sorted result ordering.
+- Strict memory compatibility: uses existing `MemoryService` methods (`get_patterns`, `log_decision`).
+- Minimal loop integration: self-improvement runs after normal loop behavior so Agent 05 contracts remain intact.
+
+### How to run
+
+Example usage:
+
+```python
+from app.agent.self_improvement import SelfImprovementEngine
+
+engine = SelfImprovementEngine()
+
+run_data = {
+  "goal": "Ship feature",
+  "status": "partial",
+  "metrics": {"total": 3, "completed": 2, "failed": 1, "skipped": 0},
+  "tasks": [
+    {"id": "task-1", "status": "completed", "error": None, "skip_reason": None},
+    {"id": "task-2", "status": "completed", "error": None, "skip_reason": None},
+    {"id": "task-3", "status": "failed", "error": "boom", "skip_reason": None},
+  ],
+}
+
+result = engine.process(run_data)
+print(result)
+```
+
+Run tests:
+
+```bash
+python -m pytest tests/ -v
+```
+
+### Dependencies
+
+- No additional third-party dependencies.
+- Reuses existing project dependencies and shared logger/memory interfaces.
+
+### Input contract
+
+`run_data` must include:
+
+- `goal: str`
+- `status: str`
+- `metrics`:
+  - `total: int`
+  - `completed: int`
+  - `failed: int`
+  - `skipped: int`
+  - `actual_parallelism: int` (optional; defaults to sequential execution)
+- `tasks: list[dict]` with:
+  - `id: str`
+  - `status: str`
+  - `error: Optional[str]`
+  - `skip_reason: Optional[str]`
+  - `dependencies: list[str]` (optional)
+
+### Structural and execution metrics
+
+- Structural metrics:
+  - `depth`
+  - `width`
+  - `branching_factor`
+  - `dependency_chains`
+- Execution metrics:
+  - `parallelism_potential`
+  - `actual_parallelism`
+  - `parallelism_utilization`
+  - `completion_efficiency`
+  - `skip_propagation_depth`
+
+### Efficiency classification rules
+
+Completion efficiency is categorized deterministically:
+
+- high: completed / total >= 0.9
+- medium: 0.5 <= completed / total < 0.9
+- low: completed / total < 0.5
+
+### Parallelism metrics
+
+- Parallelism potential:
+  Maximum number of tasks that can run concurrently based on dependency graph levels.
+
+- Actual parallelism:
+  Number of tasks executed concurrently (provided by execution layer or default = 1).
+
+- Parallelism utilization:
+  actual_parallelism / parallelism_potential
+
+### Derived signals
+
+- Example deterministic derived signals:
+  - `Graph depth = 5 (linear chain)`
+  - `No parallel execution opportunities utilized`
+  - `Wide graph executed sequentially`
+  - `Execution efficiency: high but non-parallel`
+  - `High dependency chain depth increases fragility`
+
+### Failure classification
+
+Failures are categorized deterministically as:
+
+- `execution_error`: task has explicit error content.
+- `dependency_failure`: error or skip reason begins with `dependency_failed:`.
+- `unknown_failure`: fallback category when neither rule matches.
+
+### Pattern detection strategy
+
+- A pattern is defined as repeated signals in deterministic categories:
+  - repeated failure types across runs (from memory patterns)
+  - repeated task-level errors in a run
+  - repeated inefficiency signals (for example, skipped tasks present)
+- Matching is exact string comparison.
+- Frequency threshold for repeated historical failure patterns is `>= 2`.
+
+### Confidence model
+
+Confidence is deterministic and rule-based:
+
+  failure_pattern: 0.9
+  structure_signal: 0.8
+  efficiency_signal: 0.75
+  warning: 0.7
+  optimization: 0.6
+
+Confidence does not vary dynamically and is not learned.
+
+### Inefficiency detection
+
+An inefficiency is defined as:
+
+  presence of skipped tasks
+  partial completion (completed < total)
+  repeated task retries (if retry fields are present in input)
+
+These signals generate warning or optimization insights.
+
+### Suggestion generation rules
+
+- Suggestions are derived only from generated insights.
+- No external inference or model-generated side channels are used.
+- Each suggestion maps to at least one insight and a defined target layer (`planning`, `execution`, `memory`, or `agent`).
+
+### Output ordering
+
+- Insights are sorted by:
+  1. `type` (`failure_pattern` → `structure_signal` → `efficiency_signal` → `warning` → `optimization`)
+  2. `message` (alphabetical)
+- Suggestions are sorted by:
+  1. `priority` (`high` → `medium` → `low`)
+  2. `target` (alphabetical)
+
+### Memory usage
+
+- Reads:
+  - historical patterns via `get_patterns()`
+- Writes (temporary reuse of existing decision interface):
+  - summary (`type = self_improvement_summary`)
+  - patterns (`type = self_improvement_pattern`)
+  - insights (`type = self_improvement_insight`)
+- Insight payload structure:
+
+```json
+{
+  "type": "self_improvement_insight",
+  "insights": [...],
+  "suggestions": [...]
+}
+```
+
+### Memory semantics
+
+Memory is append-only and non-idempotent by design.
+
+Repeated executions of the same input may produce duplicate self-improvement entries.
+
+Pattern detection logic must account for this by evaluating signal frequency carefully rather than relying on raw entry counts.
+
+### AgentLoop integration
+
+- `SelfImprovementEngine.process()` is called only after:
+  - execution completes
+  - loop persistence is finished
+- Integration is read-only and must not alter execution results.
+- Exceptions from self-improvement are caught and logged; no unhandled exception is allowed to break the loop result contract.
