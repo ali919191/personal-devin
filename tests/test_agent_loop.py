@@ -132,9 +132,15 @@ class TestAgentLoop:
         run_plan_mock.return_value = report
 
         memory = MagicMock()
-        AgentLoop(memory_service=memory).run("Goal")
+        result = AgentLoop(memory_service=memory).run("Goal")
 
+        assert result.status == "partial"
         memory.log_execution.assert_called_once()
+        execution_kwargs = memory.log_execution.call_args.kwargs
+        assert execution_kwargs["metadata"]["plan"] == {
+            "task_ids": ["task-1", "task-2"],
+            "total_tasks": 2,
+        }
         assert memory.log_task.call_count == 2
         memory.log_failure.assert_called_once_with(
             source="agent_loop",
@@ -142,6 +148,33 @@ class TestAgentLoop:
             context={"goal": "Goal", "task_id": "task-2", "status": "skipped"},
         )
         memory.log_decision.assert_called_once()
+
+    @patch("app.agent.agent_loop.run_plan")
+    @patch("app.agent.agent_loop.build_execution_plan")
+    def test_skipped_without_completed_is_failure(
+        self, build_execution_plan_mock, run_plan_mock
+    ) -> None:
+        plan = make_plan(
+            TaskNode(id="task-1", description="goal", dependencies=[]),
+            TaskNode(id="task-2", description="goal-2", dependencies=["task-1"]),
+        )
+        report = make_report(
+            [
+                make_task("task-1", ExecutionStatus.FAILED, error="boom"),
+                make_task(
+                    "task-2",
+                    ExecutionStatus.SKIPPED,
+                    error="dependency_failed:task-1",
+                    skip_reason="dependency_failed:task-1",
+                ),
+            ]
+        )
+        build_execution_plan_mock.return_value = plan
+        run_plan_mock.return_value = report
+
+        result = AgentLoop(memory_service=MagicMock()).run("Goal")
+
+        assert result.status == "failure"
 
     def test_empty_goal_rejected(self) -> None:
         with patch("app.agent.agent_loop.build_execution_plan"):
