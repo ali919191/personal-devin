@@ -411,3 +411,48 @@ cat data/memory/executions.json
 
 - No additional third-party dependencies.
 - Reuses existing project dependencies (`pydantic`, `pytest`) and `app.core.logger`.
+
+---
+
+## Agent 05 — Agent Loop
+
+### What was built
+
+- Deterministic orchestration layer connecting planning, execution, and memory in a single runtime loop.
+- `AgentLoop.run(goal: str) -> AgentResult` implementing: Plan → Execute → Validate → Reflect → Persist.
+- Goal normalization wrapper converting a raw goal into a single deterministic task for the planning engine.
+- Structured result models: `AgentResult` and `ReflectionResult`.
+- Memory persistence using `MemoryService` for execution summaries, per-task results, failures, and reflection decisions.
+
+### Architecture decisions
+
+- **No new facades over existing agents** — Agent Loop directly uses `build_execution_plan`, `run_plan`, and `MemoryService`.
+- **Deterministic goal handling** — raw goals are wrapped into a single explicit task; no AI decomposition or dynamic parsing is introduced.
+- **Explicit validation model** — loop classifies outcomes as `success`, `partial`, or `failure` based on `ExecutionReport` counts.
+- **Structured reflection** — reflection is intentionally simple and testable: failed task IDs, success rate, and deterministic notes.
+- **Clean integration boundaries** — planning, execution, and memory internals remain unchanged; Agent Loop only orchestrates them.
+
+### How to run
+
+Example usage:
+
+```python
+from app.agent.agent_loop import AgentLoop
+
+agent = AgentLoop()
+result = agent.run("Sample goal")
+
+print(result.status)
+print(result.reflection)
+```
+
+Run all tests:
+
+```bash
+python -m pytest tests/ -v
+```
+
+### Dependencies
+
+- No additional dependencies.
+- Reuses the existing planning, execution, memory, and core logging modules.
