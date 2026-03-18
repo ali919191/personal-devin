@@ -3,6 +3,7 @@
 from typing import Any
 
 from app.agent.schemas import AgentResult, ReflectionResult
+from app.agent.self_improvement import SelfImprovementEngine
 from app.core.logger import get_logger
 from app.execution.models import ExecutionReport, ExecutionStatus, ExecutionTask
 from app.execution.runner import run_plan
@@ -19,8 +20,18 @@ FAILURE = "failure"
 class AgentLoop:
     """Orchestrates plan, execute, validate, reflect, and persist steps."""
 
-    def __init__(self, memory_service: MemoryService | None = None) -> None:
+    def __init__(
+        self,
+        memory_service: MemoryService | None = None,
+        self_improvement_engine: SelfImprovementEngine | None = None,
+    ) -> None:
         self._memory = memory_service or MemoryService()
+        if self_improvement_engine is not None:
+            self._self_improvement = self_improvement_engine
+        elif isinstance(self._memory, MemoryService):
+            self._self_improvement = SelfImprovementEngine(memory_service=self._memory)
+        else:
+            self._self_improvement = None
 
     def run(self, goal: str) -> AgentResult:
         """Run the deterministic agent loop for a single goal string."""
@@ -54,6 +65,8 @@ class AgentLoop:
 
         self._persist(normalized_goal, plan, metrics, reflection, status)
         logger.info("memory_persisted", {"goal": normalized_goal, "status": status})
+
+        self._run_self_improvement(normalized_goal, metrics, reflection, status)
 
         return AgentResult(
             goal=normalized_goal,
@@ -179,5 +192,52 @@ class AgentLoop:
                 "goal": goal,
                 "failed_tasks": reflection.failed_tasks,
                 "success_rate": reflection.success_rate,
+            },
+        )
+
+    def _run_self_improvement(
+        self,
+        goal: str,
+        metrics: dict[str, Any],
+        reflection: ReflectionResult,
+        status: str,
+    ) -> None:
+        if self._self_improvement is None:
+            logger.info("self_improvement_skipped", {"goal": goal, "reason": "disabled"})
+            return
+
+        run_tasks: list[dict[str, Any]] = []
+        tasks: list[ExecutionTask] = list(metrics["tasks"])
+        for task in tasks:
+            run_tasks.append(
+                {
+                    "id": task.id,
+                    "status": task.status.value,
+                    "error": task.error,
+                    "skip_reason": task.skip_reason,
+                }
+            )
+
+        run_data = {
+            "goal": goal,
+            "status": status,
+            "metrics": {
+                "total": int(metrics["total"]),
+                "completed": int(metrics["completed"]),
+                "failed": int(metrics["failed"]),
+                "skipped": int(metrics["skipped"]),
+            },
+            "tasks": run_tasks,
+            "reflection": reflection.model_dump(),
+        }
+
+        logger.info("self_improvement_started", {"goal": goal})
+        result = self._self_improvement.process(run_data)
+        logger.info(
+            "self_improvement_completed",
+            {
+                "goal": goal,
+                "insights": len(result.get("insights", [])),
+                "suggestions": len(result.get("suggestions", [])),
             },
         )

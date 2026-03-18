@@ -736,3 +736,56 @@ Only merge if:
 ✅ README section exists exactly as above
 
 ✅ No core modules modified
+
+---
+
+## Agent 07 — Self-Improvement Engine
+
+### What was built
+
+- Deterministic self-improvement engine at `app/agent/self_improvement.py`.
+- Structured pipeline: analyze run data, generate insights, and produce optimization suggestions.
+- Memory-backed pattern awareness using existing memory interfaces only.
+- Light AgentLoop hook that executes self-improvement after execution persistence.
+
+### Architecture decisions
+
+- Read-only analysis model: no code mutation and no automated patching.
+- Deterministic outputs: no randomness, fixed confidence values, and sorted result ordering.
+- Strict memory compatibility: uses existing `MemoryService` methods (`get_patterns`, `log_decision`).
+- Minimal loop integration: self-improvement runs after normal loop behavior so Agent 05 contracts remain intact.
+
+### How to run
+
+Example usage:
+
+```python
+from app.agent.self_improvement import SelfImprovementEngine
+
+engine = SelfImprovementEngine()
+
+run_data = {
+  "goal": "Ship feature",
+  "status": "partial",
+  "metrics": {"total": 3, "completed": 2, "failed": 1, "skipped": 0},
+  "tasks": [
+    {"id": "task-1", "status": "completed", "error": None, "skip_reason": None},
+    {"id": "task-2", "status": "completed", "error": None, "skip_reason": None},
+    {"id": "task-3", "status": "failed", "error": "boom", "skip_reason": None},
+  ],
+}
+
+result = engine.process(run_data)
+print(result)
+```
+
+Run tests:
+
+```bash
+python -m pytest tests/ -v
+```
+
+### Dependencies
+
+- No additional third-party dependencies.
+- Reuses existing project dependencies and shared logger/memory interfaces.
