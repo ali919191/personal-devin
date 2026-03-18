@@ -483,6 +483,8 @@ Run tests:
 pytest tests/ -v
 ```
 
+---
+
 ### Dependencies
 
 Planning Engine (app/planning)
