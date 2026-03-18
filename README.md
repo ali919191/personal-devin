@@ -418,19 +418,51 @@ cat data/memory/executions.json
 
 ### What was built
 
-- Deterministic orchestration layer connecting planning, execution, and memory in a single runtime loop.
-- `AgentLoop.run(goal: str) -> AgentResult` implementing: Plan → Execute → Validate → Reflect → Persist.
-- Goal normalization wrapper converting a raw goal into a single deterministic task for the planning engine.
-- Structured result models: `AgentResult` and `ReflectionResult`.
-- Memory persistence using `MemoryService` for execution summaries, per-task results, failures, and reflection decisions.
+A deterministic orchestration layer that connects the Planning Engine, Execution Engine, and Memory System into a single controlled runtime loop.
+
+The Agent Loop executes the following sequence:
+
+Plan → Execute → Validate → Reflect → Persist
+
+It accepts a high-level goal, converts it into a minimal deterministic task structure, generates an execution plan, runs it, evaluates outcomes, logs structured memory, and returns a unified result.
+
+---
 
 ### Architecture decisions
 
-- **No new facades over existing agents** — Agent Loop directly uses `build_execution_plan`, `run_plan`, and `MemoryService`.
-- **Deterministic goal handling** — raw goals are wrapped into a single explicit task; no AI decomposition or dynamic parsing is introduced.
-- **Explicit validation model** — loop classifies outcomes as `success`, `partial`, or `failure` based on `ExecutionReport` counts.
-- **Structured reflection** — reflection is intentionally simple and testable: failed task IDs, success rate, and deterministic notes.
-- **Clean integration boundaries** — planning, execution, and memory internals remain unchanged; Agent Loop only orchestrates them.
+- **No abstraction layers introduced**
+  - Directly uses:
+    - `build_execution_plan`
+    - `run_plan`
+    - `MemoryService`
+
+- **Deterministic goal normalization**
+  - Raw goals are wrapped into a single explicit task
+  - No AI-based parsing or decomposition
+
+- **Strict orchestration boundary**
+  - Planning, execution, and memory modules remain unchanged
+  - Agent Loop only coordinates flow
+
+- **Explicit validation model**
+  - Execution outcomes classified as:
+    - success
+    - partial
+    - failure
+
+- **Structured reflection model**
+  - Captures:
+    - failed task IDs
+    - success rate
+    - deterministic notes
+
+- **Comprehensive memory logging**
+  - Execution summaries logged
+  - Per-task results logged
+  - Failures explicitly recorded
+  - Reflection decisions persisted
+
+---
 
 ### How to run
 
@@ -444,15 +476,17 @@ result = agent.run("Sample goal")
 
 print(result.status)
 print(result.reflection)
-```
 
-Run all tests:
+Run tests:
 
-```bash
-python -m pytest tests/ -v
-```
+pytest tests/ -v
 
-### Dependencies
+Dependencies
 
-- No additional dependencies.
-- Reuses the existing planning, execution, memory, and core logging modules.
+Planning Engine (app/planning)
+
+Execution Engine (app/execution)
+
+Memory System (app/memory)
+
+Agent schemas (app/agent/schemas.py)
