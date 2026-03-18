@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.core.logger import get_logger
-from app.orchestration.models import OrchestrationRequest, OrchestrationResult, RunContext
+from app.orchestration.models import OrchestrationRequest, OrchestrationResult, RunContext, TraceEntry
 from app.orchestration.registry import OrchestrationRegistry, create_default_registry
 
 logger = get_logger(__name__)
@@ -35,12 +35,12 @@ class Orchestrator:
             if error:
                 entry_metadata["error"] = error
             context.trace.append(
-                {
-                    "stage": stage,
-                    "status": status,
-                    "timestamp": trace_step,
-                    "metadata": entry_metadata,
-                }
+                TraceEntry(
+                    stage=stage,
+                    status=status,
+                    step=trace_step,
+                    metadata=entry_metadata,
+                )
             )
 
         context = RunContext(

@@ -20,9 +20,17 @@ class RunContext:
     execution_result: Any
     memory_refs: list[str]
     improvements: list[ImprovementResult]
-    trace: list[dict[str, Any]]
+    trace: list["TraceEntry"]
     status: str
     timestamps: dict[str, int]
+
+
+@dataclass
+class TraceEntry:
+    stage: str
+    status: str
+    step: int
+    metadata: dict[str, Any]
 
 
 @dataclass

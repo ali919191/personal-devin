@@ -360,8 +360,9 @@ def test_trace_integrity() -> None:
     result = orchestrator.run(request)
 
     assert len(result.context.trace) >= 5
-    assert result.context.trace[0]["stage"] == "planning"
-    assert result.context.trace[0]["status"] == "start"
+    assert result.context.trace[0].stage == "planning"
+    assert result.context.trace[0].status == "start"
+    assert result.context.trace[0].step == 1
 
 
 def test_registry_injection_is_used_for_all_components() -> None:
