@@ -974,3 +974,37 @@ pytest tests/test_improvement_engine.py
 Relies on:
 
 - Agent 07 signal contract
+
+## Agent 09 — Orchestration Engine
+
+### What was built
+
+- Central orchestration layer coordinating all system components
+
+### Architecture decisions
+
+- Deterministic pipeline execution
+- Explicit dependency wiring via registry
+- No hidden state
+
+### How to run
+
+Example usage:
+
+```python
+from app.orchestration import Orchestrator, OrchestrationRequest
+
+orchestrator = Orchestrator()
+result = orchestrator.run(
+  OrchestrationRequest(
+    run_id="run-001",
+    goal="Ship feature",
+  )
+)
+
+print(result.status)
+```
+
+### Dependencies
+
+- Planning, Execution, Memory, Agent Loop, Improvement Engine
