@@ -501,56 +501,238 @@ Agent schemas (app/agent/schemas.py)
 
 ### What was built
 
-- Integration abstraction system
-- Registry-based integration management
-- Filesystem + Mock API integrations
+A deterministic integrations framework that enables the Personal Devin system to interact with external systems through controlled, testable abstractions.
+
+Key components:
+
+- **Integration base interface** enforcing a standard execution contract
+- **Integration registry** for dynamic registration and retrieval
+- **Filesystem integration** with safe, sandboxed file operations
+- **Mock API integration** simulating external API behavior without network calls
+
+All integrations follow a strict input/output contract and are designed to be fully deterministic.
+
+---
 
 ### Architecture decisions
 
-- Deterministic integrations only
-- No real external dependencies
-- Registry pattern for extensibility
+**1. Deterministic-only integrations**
 
-### How to run
+- No real network calls allowed
+- No randomness or time-based behavior
+- Ensures reproducibility and testability
 
-Example manual invocation:
+**2. Registry pattern**
 
-```python
-from pathlib import Path
+- Centralized integration management
+- Prevents tight coupling between execution and integrations
+- Enables future plug-and-play integrations
 
-from app.integrations import FilesystemIntegration, IntegrationRegistry, MockAPIIntegration
+**3. Strict execution contract**
+
+All integrations follow:
+
+```json
+{
+  "integration": "name",
+  "action": "action_name",
+  "payload": {}
+}
+
+Return:
+
+{
+  "status": "success | error",
+  "data": {},
+  "error": null
+}
+
+4. Sandboxed filesystem
+
+All file operations restricted to a root directory
+
+Path traversal protection enforced
+
+Prevents unsafe file access
+
+5. Isolation from core systems
+
+No modification to planning, execution, memory, or agent loop
+
+Integrations are additive only
+
+How to run
+1. Register integrations
+from app.integrations.registry import IntegrationRegistry
+from app.integrations.filesystem import FilesystemIntegration
+from app.integrations.mock_api import MockAPIIntegration
 
 registry = IntegrationRegistry()
-registry.register(FilesystemIntegration(root_dir=Path("data/integration_root")))
+
+registry.register(FilesystemIntegration(root_dir="./data"))
 registry.register(MockAPIIntegration())
+2. Execute an integration
+integration = registry.get("filesystem")
 
-filesystem_result = registry.execute(
-  {
-    "integration": "filesystem",
-    "action": "write_file",
-    "payload": {"path": "notes/hello.txt", "content": "hello"},
-  }
+result = integration.execute(
+    action="write_file",
+    payload={
+        "path": "test.txt",
+        "content": "hello world"
+    }
 )
 
-mock_result = registry.execute(
-  {
-    "integration": "mock_api",
-    "action": "GET",
-    "payload": {"endpoint": "/health"},
-  }
-)
+print(result)
+3. Example response
+{
+  "status": "success",
+  "data": {
+    "path": "test.txt"
+  },
+  "error": null
+}
+Validation
 
-print(filesystem_result)
-print(mock_result)
-```
+Run full test suite:
 
-Run tests:
-
-```bash
 python -m pytest tests/ -v
-```
+Test coverage
 
-### Dependencies
+The following behaviors are validated:
 
-- No additional third-party dependencies.
-- Reuses existing project dependencies (`pydantic`, `pytest`) and shared logger in `app/core/logger.py`.
+Integration registry:
+
+Registration
+
+Duplicate prevention
+
+Retrieval errors
+
+Filesystem integration:
+
+File write
+
+File read
+
+Directory listing
+
+Path traversal protection
+
+Mock API integration:
+
+Deterministic GET/POST responses
+
+Response structure validation
+
+Error handling:
+
+Invalid actions
+
+Invalid payloads
+
+Missing integrations
+
+Dependencies
+
+No external dependencies.
+
+Uses only:
+
+Python standard library
+
+Existing project logging system
+
+Notes
+
+This layer introduces external interaction capability but does NOT yet integrate with the execution engine.
+
+Future agents will:
+
+Connect integrations to execution engine
+
+Enable tool usage within task execution
+
+
+---
+
+## **How to Validate (Strict Checklist)**
+
+Run this sequence **after Copilot generates code**:
+
+---
+
+### 1. Imports must resolve
+```bash
+python -c "from app.integrations.registry import IntegrationRegistry"
+2. Run full tests
+python -m pytest tests/ -v
+
+Hard requirement:
+
+All tests pass
+
+No skipped tests
+
+3. Manual integration test (critical)
+
+Open Python shell:
+
+python
+
+Run:
+
+from app.integrations.registry import IntegrationRegistry
+from app.integrations.filesystem import FilesystemIntegration
+
+registry = IntegrationRegistry()
+registry.register(FilesystemIntegration(root_dir="./tmp"))
+
+fs = registry.get("filesystem")
+
+# write
+print(fs.execute("write_file", {"path": "a.txt", "content": "test"}))
+
+# read
+print(fs.execute("read_file", {"path": "a.txt"}))
+
+# list
+print(fs.execute("list_dir", {}))
+4. Security validation (must fail)
+print(fs.execute("read_file", {"path": "../outside.txt"}))
+
+Expected:
+
+status = "error"
+5. Mock API validation
+from app.integrations.mock_api import MockAPIIntegration
+
+api = MockAPIIntegration()
+
+print(api.execute("GET", {"endpoint": "/users"}))
+print(api.execute("POST", {"endpoint": "/users", "data": {"id": 1}}))
+
+Must return deterministic responses.
+
+Failure Conditions (Reject PR if any)
+
+Filesystem allows ../ traversal
+
+Registry allows duplicate names
+
+Any randomness or timestamps in output
+
+Tests missing or incomplete
+
+README not appended (not replaced)
+
+Final Gate
+
+Only merge if:
+
+✅ Tests pass
+
+✅ Manual validation passes
+
+✅ README section exists exactly as above
+
+✅ No core modules modified
