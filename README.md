@@ -476,3 +476,21 @@ result = agent.run("Sample goal")
 
 print(result)
 ```
+
+---
+
+Run tests:
+
+```bash
+pytest tests/ -v
+```
+
+### Dependencies
+
+Planning Engine (app/planning)
+
+Execution Engine (app/execution)
+
+Memory System (app/memory)
+
+Agent schemas (app/agent/schemas.py)
