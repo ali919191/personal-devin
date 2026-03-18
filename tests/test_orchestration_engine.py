@@ -104,6 +104,30 @@ class StubImprovementEngine:
         return results
 
 
+class RecordingAgentLoop:
+    def __init__(self, call_order: list[str], status: str = "success") -> None:
+        self._call_order = call_order
+        self._status = status
+
+    def run(self, goal: str) -> StubAgentLoopResult:
+        self._call_order.append("agent_loop")
+        _ = goal
+        return StubAgentLoopResult(status=self._status)
+
+
+class RecordingImprovementEngine:
+    def __init__(self, call_order: list[str]) -> None:
+        self._call_order = call_order
+
+    def select_actions(self, signals):
+        self._call_order.append("improvement_select")
+        return [{"action_type": "retry_strategy", "source_signal": signal.signal_type} for signal in signals]
+
+    def apply(self, actions):
+        self._call_order.append("improvement_apply")
+        return [ImprovementResult(action_type=action["action_type"], status="applied") for action in actions]
+
+
 def _build_registry(
     planning_engine,
     execution_engine,
@@ -202,6 +226,37 @@ def test_execution_failure_continues_to_reflection() -> None:
     assert len(memory.failure_calls) == 1
 
 
+def test_partial_failure_integrity_execution_failure_still_improves() -> None:
+    memory = StubMemorySystem()
+    agent_loop = StubAgentLoop(status="partial")
+    improvement = StubImprovementEngine()
+
+    registry = _build_registry(
+        planning_engine=lambda tasks: StubPlan(metadata=StubPlanMetadata(total_tasks=1)),
+        execution_engine=lambda plan: (_ for _ in ()).throw(RuntimeError("boom")),
+        memory_system=memory,
+        agent_loop=agent_loop,
+        improvement_engine=improvement,
+    )
+
+    orchestrator = Orchestrator(registry=registry)
+    request = OrchestrationRequest(
+        run_id="run-003b",
+        goal="Execution failure with improvement",
+        signals=[SignalRecord(signal_type="low_success_rate", signal_value="0.3")],
+    )
+
+    result = orchestrator.run(request)
+
+    assert result.status == "failed"
+    assert len(memory.execution_calls) == 1
+    assert len(memory.failure_calls) == 1
+    assert len(agent_loop.calls) == 1
+    assert len(improvement.select_calls) == 1
+    assert len(improvement.apply_calls) == 1
+    assert len(result.context.improvements) == 1
+
+
 def test_memory_integration_records_references() -> None:
     memory = StubMemorySystem()
 
@@ -280,7 +335,77 @@ def test_deterministic_output() -> None:
     assert first.status == second.status
     assert first.context.status == second.context.status
     assert first.context.timestamps == second.context.timestamps
+    assert first.context.trace == second.context.trace
     assert len(first.context.memory_refs) == len(second.context.memory_refs)
     assert first.context.memory_refs[0].startswith("execution-")
     assert second.context.memory_refs[0].startswith("execution-")
     assert first.error == second.error
+
+
+def test_trace_integrity() -> None:
+    registry = _build_registry(
+        planning_engine=lambda tasks: StubPlan(metadata=StubPlanMetadata(total_tasks=len(tasks))),
+        execution_engine=lambda plan: StubExecutionResult(
+            status="completed",
+            total_tasks=plan.metadata.total_tasks,
+            completed_tasks=plan.metadata.total_tasks,
+            failed_tasks=0,
+            skipped_tasks=0,
+        ),
+    )
+
+    orchestrator = Orchestrator(registry=registry)
+    request = OrchestrationRequest(run_id="run-trace", goal="Trace check")
+
+    result = orchestrator.run(request)
+
+    assert len(result.context.trace) >= 5
+    assert result.context.trace[0]["stage"] == "planning"
+    assert result.context.trace[0]["status"] == "start"
+
+
+def test_registry_injection_is_used_for_all_components() -> None:
+    call_order: list[str] = []
+    memory = StubMemorySystem()
+    agent_loop = RecordingAgentLoop(call_order=call_order, status="success")
+    improvement = RecordingImprovementEngine(call_order=call_order)
+
+    def planning_engine(tasks):
+        call_order.append("planning")
+        return StubPlan(metadata=StubPlanMetadata(total_tasks=len(tasks)))
+
+    def execution_engine(plan):
+        call_order.append("execution")
+        return StubExecutionResult(
+            status="completed",
+            total_tasks=plan.metadata.total_tasks,
+            completed_tasks=plan.metadata.total_tasks,
+            failed_tasks=0,
+            skipped_tasks=0,
+        )
+
+    registry = OrchestrationRegistry(
+        planning_engine=planning_engine,
+        execution_engine=execution_engine,
+        memory_system=memory,
+        agent_loop=agent_loop,
+        improvement_engine=improvement,
+    )
+
+    orchestrator = Orchestrator(registry=registry)
+    request = OrchestrationRequest(
+        run_id="run-007",
+        goal="Registry injection",
+        signals=[SignalRecord(signal_type="low_success_rate", signal_value="0.4")],
+    )
+
+    result = orchestrator.run(request)
+
+    assert result.status == "success"
+    assert call_order == [
+        "planning",
+        "execution",
+        "agent_loop",
+        "improvement_select",
+        "improvement_apply",
+    ]

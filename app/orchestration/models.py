@@ -20,6 +20,7 @@ class RunContext:
     execution_result: Any
     memory_refs: list[str]
     improvements: list[ImprovementResult]
+    trace: list[dict[str, Any]]
     status: str
     timestamps: dict[str, int]
 

@@ -16,11 +16,32 @@ class Orchestrator:
     def run(self, request: OrchestrationRequest) -> OrchestrationResult:
         timestamps: dict[str, int] = {}
         step = 0
+        trace_step = 0
 
         def mark(event: str) -> None:
             nonlocal step
             step += 1
             timestamps[event] = step
+
+        def append_trace(
+            stage: str,
+            status: str,
+            metadata: dict[str, Any] | None = None,
+            error: str | None = None,
+        ) -> None:
+            nonlocal trace_step
+            trace_step += 1
+            entry_metadata = dict(metadata or {})
+            if error:
+                entry_metadata["error"] = error
+            context.trace.append(
+                {
+                    "stage": stage,
+                    "status": status,
+                    "timestamp": trace_step,
+                    "metadata": entry_metadata,
+                }
+            )
 
         context = RunContext(
             run_id=request.run_id,
@@ -29,14 +50,16 @@ class Orchestrator:
             execution_result=None,
             memory_refs=[],
             improvements=[],
+            trace=[],
             status="running",
             timestamps=timestamps,
         )
 
-        logger.info("orchestration_started", {"run_id": request.run_id, "goal": request.goal})
+        self._log_stage("orchestration", "start", request.run_id, {"goal": request.goal})
 
         mark("planning_started")
-        logger.info("planning_started", {"run_id": request.run_id})
+        append_trace("planning", "start", {"run_id": request.run_id})
+        self._log_stage("planning", "start", request.run_id)
         try:
             tasks = request.tasks or [
                 {
@@ -49,12 +72,14 @@ class Orchestrator:
             self._validate_plan(plan)
             context.plan = plan
             mark("planning_completed")
-            logger.info("planning_completed", {"run_id": request.run_id, "status": "ok"})
+            append_trace("planning", "completed", {"run_id": request.run_id, "status": "ok"})
+            self._log_stage("planning", "end", request.run_id, {"status": "ok"})
         except Exception as exc:
             mark("planning_failed")
             context.status = "failed"
-            logger.error("planning_failed", error=str(exc), data={"run_id": request.run_id})
-            logger.info("orchestration_completed", {"run_id": request.run_id, "status": "failed"})
+            append_trace("planning", "error", {"run_id": request.run_id}, str(exc))
+            self._log_stage_error("planning", request.run_id, str(exc))
+            self._log_stage("orchestration", "end", request.run_id, {"status": "failed"})
             return OrchestrationResult(
                 run_id=request.run_id,
                 status="failed",
@@ -63,7 +88,8 @@ class Orchestrator:
             )
 
         mark("execution_started")
-        logger.info("execution_started", {"run_id": request.run_id})
+        append_trace("execution", "start", {"run_id": request.run_id})
+        self._log_stage("execution", "start", request.run_id)
         execution_error = ""
         try:
             execution_result = self._registry.execution_engine(context.plan)
@@ -76,20 +102,20 @@ class Orchestrator:
                 "failed_tasks": self._safe_total_tasks(context.plan),
                 "skipped_tasks": 0,
             }
-            logger.error("execution_failed", error=execution_error, data={"run_id": request.run_id})
+            append_trace("execution", "error", {"run_id": request.run_id}, execution_error)
+            self._log_stage_error("execution", request.run_id, execution_error)
 
         context.execution_result = execution_result
         execution_status = self._extract_execution_status(execution_result)
         if execution_status == "failed":
             context.status = "failed"
         mark("execution_completed")
-        logger.info(
-            "execution_completed",
-            {"run_id": request.run_id, "status": execution_status},
-        )
+        append_trace("execution", "completed", {"run_id": request.run_id, "status": execution_status})
+        self._log_stage("execution", "end", request.run_id, {"status": execution_status})
 
         mark("memory_store_started")
-        logger.info("memory_store_started", {"run_id": request.run_id})
+        append_trace("memory_store", "start", {"run_id": request.run_id})
+        self._log_stage("memory_store", "start", request.run_id)
         try:
             total_tasks = self._extract_metric(execution_result, "total_tasks")
             completed_tasks = self._extract_metric(execution_result, "completed_tasks")
@@ -117,12 +143,15 @@ class Orchestrator:
                 )
                 context.memory_refs.append(failure_memory.id)
         except Exception as exc:
-            logger.error("memory_store_failed", error=str(exc), data={"run_id": request.run_id})
+            append_trace("memory_store", "error", {"run_id": request.run_id}, str(exc))
+            self._log_stage_error("memory_store", request.run_id, str(exc))
         mark("memory_store_completed")
-        logger.info("memory_store_completed", {"run_id": request.run_id, "refs": len(context.memory_refs)})
+        append_trace("memory_store", "completed", {"run_id": request.run_id, "refs": len(context.memory_refs)})
+        self._log_stage("memory_store", "end", request.run_id, {"refs": len(context.memory_refs)})
 
         mark("reflection_started")
-        logger.info("reflection_started", {"run_id": request.run_id})
+        append_trace("reflection", "start", {"run_id": request.run_id})
+        self._log_stage("reflection", "start", request.run_id)
         try:
             loop_result = self._registry.agent_loop.run(request.goal)
             loop_status = getattr(loop_result, "status", "success")
@@ -132,32 +161,40 @@ class Orchestrator:
                 context.status = "partial"
         except Exception as exc:
             context.status = "failed"
-            logger.error("reflection_failed", error=str(exc), data={"run_id": request.run_id})
+            append_trace("reflection", "error", {"run_id": request.run_id}, str(exc))
+            self._log_stage_error("reflection", request.run_id, str(exc))
         mark("reflection_completed")
-        logger.info("reflection_completed", {"run_id": request.run_id, "status": context.status})
+        append_trace("reflection", "completed", {"run_id": request.run_id, "status": context.status})
+        self._log_stage("reflection", "end", request.run_id, {"status": context.status})
 
         mark("improvement_started")
-        logger.info("improvement_started", {"run_id": request.run_id})
+        append_trace("improvement", "start", {"run_id": request.run_id})
+        self._log_stage("improvement", "start", request.run_id)
         try:
             actions = self._registry.improvement_engine.select_actions(request.signals)
             context.improvements = self._registry.improvement_engine.apply(actions)
         except Exception as exc:
             context.status = "failed"
-            logger.error("improvement_failed", error=str(exc), data={"run_id": request.run_id})
+            append_trace("improvement", "error", {"run_id": request.run_id}, str(exc))
+            self._log_stage_error("improvement", request.run_id, str(exc))
         mark("improvement_completed")
-        logger.info(
-            "improvement_completed",
-            {
-                "run_id": request.run_id,
-                "applied_count": len(context.improvements),
-            },
+        append_trace(
+            "improvement",
+            "completed",
+            {"run_id": request.run_id, "applied_count": len(context.improvements)},
+        )
+        self._log_stage(
+            "improvement",
+            "end",
+            request.run_id,
+            {"applied_count": len(context.improvements)},
         )
 
         if context.status == "running":
             context.status = "success"
 
         mark("orchestration_completed")
-        logger.info("orchestration_completed", {"run_id": request.run_id, "status": context.status})
+        self._log_stage("orchestration", "end", request.run_id, {"status": context.status})
 
         return OrchestrationResult(
             run_id=request.run_id,
@@ -191,3 +228,30 @@ class Orchestrator:
         if isinstance(payload, dict):
             return payload.get(key)
         return getattr(payload, key, None)
+
+    def _log_stage(
+        self,
+        stage: str,
+        status: str,
+        run_id: str,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        payload: dict[str, Any] = {
+            "stage": stage,
+            "status": status,
+            "run_id": run_id,
+        }
+        if extra:
+            payload.update(extra)
+        logger.info("orchestration_stage", payload)
+
+    def _log_stage_error(self, stage: str, run_id: str, error: str) -> None:
+        logger.error(
+            "orchestration_stage",
+            error=error,
+            data={
+                "stage": stage,
+                "status": "error",
+                "run_id": run_id,
+            },
+        )
