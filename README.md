@@ -827,6 +827,25 @@ python -m pytest tests/ -v
   - `completion_efficiency`
   - `skip_propagation_depth`
 
+### Efficiency classification rules
+
+Completion efficiency is categorized deterministically:
+
+- high: completed / total >= 0.9
+- medium: 0.5 <= completed / total < 0.9
+- low: completed / total < 0.5
+
+### Parallelism metrics
+
+- Parallelism potential:
+  Maximum number of tasks that can run concurrently based on dependency graph levels.
+
+- Actual parallelism:
+  Number of tasks executed concurrently (provided by execution layer or default = 1).
+
+- Parallelism utilization:
+  actual_parallelism / parallelism_potential
+
 ### Derived signals
 
 - Example deterministic derived signals:
