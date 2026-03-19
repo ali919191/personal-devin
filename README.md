@@ -1051,3 +1051,28 @@ print(result.status)
 Dependencies
 
 Planning, Execution, Memory, Agent Loop, Improvement Engine
+
+## Agent 10 — Integration Control Layer
+
+### What was built
+
+- Tool abstraction layer (Tool interface)
+- Controlled execution wrapper for all integrations
+- Structured ToolResult contract
+- Trace-integrated external execution
+- Tool registry enforcing controlled access
+
+### Architecture decisions
+
+- All integrations must implement Tool
+- No raw side effects allowed
+- Registry is single source of truth
+- Execution must be observable (trace)
+
+### How to run
+
+pytest tests/test_integrations_control.py
+
+### Dependencies
+
+None
