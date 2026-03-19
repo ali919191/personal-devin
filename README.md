@@ -1702,3 +1702,30 @@ pytest
 ### Dependencies
 - No new external infrastructure SDK dependencies added.
 - Uses existing project dependencies from `requirements.txt` (`pytest`, `pydantic`).
+
+## Agent 26 — Deployment Orchestrator
+
+### What was built
+Deployment orchestration layer that translates execution outputs into structured deployment actions.
+
+New files added:
+- `app/deployment/models.py` — extended with `DeploymentRequest` and `DeploymentResult` frozen dataclasses.
+- `app/deployment/providers/base.py` — abstract `DeploymentProvider` interface.
+- `app/deployment/providers/local_provider.py` — `LocalDeploymentProvider` (in-process simulation, no external side effects).
+- `app/deployment/orchestrator.py` — extended `DeploymentOrchestrator` with `run(request)` method and optional provider injection.
+- `tests/deployment/test_orchestrator.py` — provider-based orchestrator test suite.
+
+### Architecture decisions
+- Provider pattern with an abstract contract keeps the orchestrator environment-agnostic.
+- Dry-run first design: `DeploymentRequest.dry_run` defaults to `True`; steps are returned immediately without touching any provider.
+- Deterministic execution: same `DeploymentRequest` input always produces the same `DeploymentResult` output.
+- Backward compatible: existing `generate_plan()` / `DeploymentContext` path is unchanged; `provider` is an optional constructor argument defaulting to `LocalDeploymentProvider`.
+- Provider exceptions are caught and surfaced as `DeploymentResult(success=False, errors=[...])` — the orchestrator never propagates provider failures to callers.
+
+### How to run
+```
+pytest tests/deployment
+```
+
+### Dependencies
+None — reuses existing project dependencies (`pytest`, standard-library `abc`, `dataclasses`).

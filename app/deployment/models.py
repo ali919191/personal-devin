@@ -86,3 +86,33 @@ class DeploymentPlan:
     def to_json(self) -> str:
         """Serialize the plan to a stable JSON payload."""
         return json.dumps(self.to_dict(), sort_keys=True)
+
+
+# ---------------------------------------------------------------------------
+# Agent 26 — provider-based deployment request / result contract
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class DeploymentRequest:
+    """Input contract for a provider-based deployment run."""
+
+    plan_id: str
+    steps: list[dict]
+    environment: str
+    dry_run: bool = True
+
+    def __post_init__(self) -> None:
+        if not self.plan_id:
+            raise ValueError("plan_id must be provided")
+        if not self.environment:
+            raise ValueError("environment must be provided")
+
+
+@dataclass(frozen=True)
+class DeploymentResult:
+    """Structured result produced by a provider-based deployment run."""
+
+    success: bool
+    executed_steps: list[dict]
+    errors: list[str]
