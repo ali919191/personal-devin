@@ -257,7 +257,6 @@ Ordered tasks:
   implement: Implement the API
   docs: Write documentation
   test: Write and run tests
-
 Execution groups (parallelisable):
   Group 0: ['design']
   Group 1: ['implement']
@@ -269,6 +268,23 @@ Total tasks: 4
 ### Dependencies
 
 - None beyond what Agent 01 already uses (standard library only for graph logic).
+
+## Agent 17 — Agent Loop Optimization
+
+### What was built
+- Deterministic loop execution
+- Structured logging
+- Retry system with failure classification
+
+### Architecture decisions
+- Separation of loop state, logging, retry logic
+- Determinism enforced at iteration level
+
+### How to run
+- pytest tests/test_agent_loop.py
+
+### Dependencies
+- Standard library only
 
 ---
 
