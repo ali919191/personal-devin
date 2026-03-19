@@ -1,5 +1,6 @@
 """Execution orchestrator: iterates plan steps, calls executor, logs and reports."""
 
+from dataclasses import dataclass
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -7,14 +8,39 @@ from typing import Any
 from app.context.models import EnvironmentContext
 from app.context.service import EnvironmentContextService
 from app.context.validator import EnvironmentContextValidator
+from app.deployment.context_injector import build_deployment_context
+from app.deployment.deployment_context import DeploymentContext
 from app.execution.executor import Executor, TaskHandler
 from app.execution.logger import get_execution_logger
 from app.execution.models import ExecutionReport, ExecutionStatus, ExecutionTask
-from app.infrastructure.base import DefaultInfrastructureContext, InfrastructureContext
+from app.infrastructure.base import InfrastructureContext
 from app.infrastructure.factory import get_provider
 from app.planning.models import ExecutionPlan, TaskNode
 
 _logger = get_execution_logger(__name__)
+
+
+@dataclass(frozen=True)
+class _InjectedInfrastructureContext:
+    """Infrastructure-provider projection derived from DeploymentContext only."""
+
+    environment: str
+    execution_id: str
+    services: list[str]
+    region: str
+    provider_type: str
+    credentials_ref: str
+
+    @classmethod
+    def from_deployment_context(cls, context: DeploymentContext) -> "_InjectedInfrastructureContext":
+        return cls(
+            environment=context.environment_name,
+            execution_id=context.execution_id,
+            services=list(context.services),
+            region=context.region,
+            provider_type=context.provider_type,
+            credentials_ref=context.credentials_ref,
+        )
 
 
 def _task_node_to_execution_task(node: TaskNode) -> ExecutionTask:
@@ -47,6 +73,47 @@ class Runner:
         self.stop_on_failure = stop_on_failure
         self._context_validator = EnvironmentContextValidator()
 
+    def _resolve_deployment_context(
+        self,
+        deployment_context: DeploymentContext | None,
+        infrastructure_context: InfrastructureContext | None,
+    ) -> DeploymentContext:
+        if deployment_context is not None:
+            return deployment_context
+
+        if infrastructure_context is not None:
+            return build_deployment_context(
+                {
+                    "name": infrastructure_context.environment,
+                    "region": infrastructure_context.region,
+                    "provider_type": infrastructure_context.provider_type,
+                    "credentials_ref": infrastructure_context.credentials_ref,
+                },
+                {
+                    "variables": {"services": list(infrastructure_context.services)},
+                    "metadata": {
+                        "execution_id": infrastructure_context.execution_id,
+                        "source": "legacy_infrastructure_context",
+                    },
+                },
+            )
+
+        return build_deployment_context(
+            {
+                "name": "local",
+                "region": "local",
+                "provider_type": "local",
+                "credentials_ref": "",
+            },
+            {
+                "variables": {"services": []},
+                "metadata": {
+                    "execution_id": "default",
+                    "source": "runner_default_context",
+                },
+            },
+        )
+
     def _validate_environment_context(
         self,
         plan: ExecutionPlan,
@@ -65,21 +132,17 @@ class Runner:
 
     def _deploy_infrastructure(
         self,
-        infrastructure_context: InfrastructureContext | None,
+        deployment_context: DeploymentContext,
     ) -> None:
-        ctx: InfrastructureContext = (
-            infrastructure_context
-            if infrastructure_context is not None
-            else DefaultInfrastructureContext()
-        )
-        provider = get_provider(ctx.environment)
-        provider.deploy(ctx)
+        provider = get_provider(deployment_context.provider_type)
+        provider.deploy(_InjectedInfrastructureContext.from_deployment_context(deployment_context))
 
     def run(
         self,
         plan: ExecutionPlan,
         handlers: dict[str, TaskHandler] | None = None,
         environment_context: dict[str, Any] | EnvironmentContext | None = None,
+        deployment_context: DeploymentContext | None = None,
         infrastructure_context: InfrastructureContext | None = None,
     ) -> ExecutionReport:
         """Execute all tasks in *plan* in their topological order.
@@ -97,7 +160,11 @@ class Runner:
             ExecutionReport summarising the outcome of every task.
         """
         self._validate_environment_context(plan, environment_context)
-        self._deploy_infrastructure(infrastructure_context)
+        resolved_deployment_context = self._resolve_deployment_context(
+            deployment_context,
+            infrastructure_context,
+        )
+        self._deploy_infrastructure(resolved_deployment_context)
         handlers = handlers or {}
         started_at = datetime.now(UTC)
         _logger.log_run_started(plan.metadata.total_tasks)
@@ -199,6 +266,7 @@ def run_plan(
     handlers: dict[str, TaskHandler] | None = None,
     stop_on_failure: bool = True,
     environment_context: dict[str, Any] | EnvironmentContext | None = None,
+    deployment_context: DeploymentContext | None = None,
     infrastructure_context: InfrastructureContext | None = None,
 ) -> ExecutionReport:
     """Convenience function: create a Runner and execute a plan in one call.
@@ -223,5 +291,6 @@ def run_plan(
         plan,
         handlers=handlers,
         environment_context=environment_context,
+        deployment_context=deployment_context,
         infrastructure_context=infrastructure_context,
     )

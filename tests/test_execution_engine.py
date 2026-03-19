@@ -2,6 +2,7 @@
 
 import pytest
 
+from app.deployment.context_injector import build_deployment_context
 from app.execution.executor import Executor
 from app.execution.models import ExecutionReport, ExecutionStatus, ExecutionTask
 from app.execution.runner import Runner, run_plan
@@ -24,6 +25,21 @@ def make_plan(*nodes: TaskNode) -> ExecutionPlan:
         ordered_tasks=node_list,
         execution_groups=[ExecutionGroup(group_id=0, task_ids=[n.id for n in node_list])],
         metadata=PlanMetadata(total_tasks=len(node_list), has_cycles=False),
+    )
+
+
+def make_deployment_context(environment: str = "local", provider_type: str = "local"):
+    return build_deployment_context(
+        {
+            "name": environment,
+            "region": "local",
+            "provider_type": provider_type,
+            "credentials_ref": "",
+        },
+        {
+            "variables": {"services": []},
+            "metadata": {"execution_id": "exec-runner-tests"},
+        },
     )
 
 
@@ -124,14 +140,14 @@ class TestExecutor:
 class TestRunnerSimplePlan:
     def test_single_task_completes(self) -> None:
         plan = make_plan(make_node("t1"))
-        report = run_plan(plan)
+        report = run_plan(plan, deployment_context=make_deployment_context())
         assert report.status == ExecutionStatus.COMPLETED
         assert report.completed_tasks == 1
         assert report.failed_tasks == 0
 
     def test_multiple_independent_tasks_all_complete(self) -> None:
         plan = make_plan(make_node("a"), make_node("b"), make_node("c"))
-        report = run_plan(plan)
+        report = run_plan(plan, deployment_context=make_deployment_context())
         assert report.status == ExecutionStatus.COMPLETED
         assert report.completed_tasks == 3
 
@@ -141,13 +157,13 @@ class TestRunnerSimplePlan:
             make_node("t2", deps=["t1"]),
             make_node("t3", deps=["t2"]),
         )
-        report = run_plan(plan)
+        report = run_plan(plan, deployment_context=make_deployment_context())
         assert report.status == ExecutionStatus.COMPLETED
         assert report.completed_tasks == 3
 
     def test_empty_plan(self) -> None:
         plan = make_plan()
-        report = run_plan(plan)
+        report = run_plan(plan, deployment_context=make_deployment_context())
         assert report.status == ExecutionStatus.COMPLETED
         assert report.total_tasks == 0
         assert report.completed_tasks == 0
@@ -161,7 +177,11 @@ class TestRunnerSimplePlan:
 class TestRunnerFailedStep:
     def test_failed_step_marks_report_failed(self) -> None:
         plan = make_plan(make_node("t1"), make_node("t2"))
-        report = run_plan(plan, handlers={"t1": always_fail})
+        report = run_plan(
+            plan,
+            handlers={"t1": always_fail},
+            deployment_context=make_deployment_context(),
+        )
         assert report.status == ExecutionStatus.FAILED
         assert report.failed_tasks == 1
 
@@ -171,6 +191,7 @@ class TestRunnerFailedStep:
             plan,
             handlers={"t1": always_fail},
             stop_on_failure=True,
+            deployment_context=make_deployment_context(),
         )
         assert report.failed_tasks == 1
         assert report.skipped_tasks == 2
@@ -182,6 +203,7 @@ class TestRunnerFailedStep:
             plan,
             handlers={"a": always_fail},
             stop_on_failure=False,
+            deployment_context=make_deployment_context(),
         )
         assert report.failed_tasks == 1
         assert report.completed_tasks == 2
@@ -189,13 +211,21 @@ class TestRunnerFailedStep:
     def test_dependent_task_skipped_when_dep_fails(self) -> None:
         """A task whose dependency failed should be SKIPPED, not run."""
         plan = make_plan(make_node("t1"), make_node("t2", deps=["t1"]))
-        report = run_plan(plan, handlers={"t1": always_fail})
+        report = run_plan(
+            plan,
+            handlers={"t1": always_fail},
+            deployment_context=make_deployment_context(),
+        )
         t2_task = next(t for t in report.tasks if t.id == "t2")
         assert t2_task.status == ExecutionStatus.SKIPPED
 
     def test_skipped_task_contains_reason(self) -> None:
         plan = make_plan(make_node("t1"), make_node("t2", deps=["t1"]))
-        report = run_plan(plan, handlers={"t1": always_fail})
+        report = run_plan(
+            plan,
+            handlers={"t1": always_fail},
+            deployment_context=make_deployment_context(),
+        )
         t2_task = next(t for t in report.tasks if t.id == "t2")
         assert t2_task.skip_reason is not None
         assert t2_task.error is not None
@@ -204,7 +234,11 @@ class TestRunnerFailedStep:
 
     def test_failed_task_stores_error_in_report(self) -> None:
         plan = make_plan(make_node("t1"))
-        report = run_plan(plan, handlers={"t1": always_fail})
+        report = run_plan(
+            plan,
+            handlers={"t1": always_fail},
+            deployment_context=make_deployment_context(),
+        )
         t1_task = report.tasks[0]
         assert t1_task.error is not None
         assert "Simulated failure" in t1_task.error
@@ -228,7 +262,11 @@ class TestRunnerOrder:
             make_node("second"),
             make_node("third"),
         )
-        run_plan(plan, handlers={"first": recorder, "second": recorder, "third": recorder})
+        run_plan(
+            plan,
+            handlers={"first": recorder, "second": recorder, "third": recorder},
+            deployment_context=make_deployment_context(),
+        )
         assert execution_order == ["first", "second", "third"]
 
     def test_dependency_always_before_dependent(self) -> None:
@@ -246,6 +284,7 @@ class TestRunnerOrder:
         run_plan(
             plan,
             handlers={"root": recorder, "child": recorder, "leaf": recorder},
+            deployment_context=make_deployment_context(),
         )
         assert execution_order.index("root") < execution_order.index("child")
         assert execution_order.index("child") < execution_order.index("leaf")
@@ -269,7 +308,11 @@ class TestRunnerOrder:
             make_node("d", deps=["b", "c"]),
         ]
         plan = make_plan(*nodes)
-        run_plan(plan, handlers={n.id: recording_handler for n in nodes})
+        run_plan(
+            plan,
+            handlers={n.id: recording_handler for n in nodes},
+            deployment_context=make_deployment_context(),
+        )
 
     def test_same_input_plan_produces_same_execution_order(self) -> None:
         def make_recorder(out: list[str]):
@@ -297,6 +340,7 @@ class TestRunnerOrder:
                 "right": make_recorder(order1),
                 "merge": make_recorder(order1),
             },
+            deployment_context=make_deployment_context(),
         )
         run_plan(
             plan,
@@ -306,6 +350,7 @@ class TestRunnerOrder:
                 "right": make_recorder(order2),
                 "merge": make_recorder(order2),
             },
+            deployment_context=make_deployment_context(),
         )
 
         assert order1 == order2
@@ -319,44 +364,48 @@ class TestRunnerOrder:
 class TestExecutionReport:
     def test_report_is_execution_report_instance(self) -> None:
         plan = make_plan(make_node("t1"))
-        report = run_plan(plan)
+        report = run_plan(plan, deployment_context=make_deployment_context())
         assert isinstance(report, ExecutionReport)
 
     def test_report_total_tasks(self) -> None:
         plan = make_plan(make_node("a"), make_node("b"), make_node("c"))
-        report = run_plan(plan)
+        report = run_plan(plan, deployment_context=make_deployment_context())
         assert report.total_tasks == 3
 
     def test_report_completed_count(self) -> None:
         plan = make_plan(make_node("a"), make_node("b"))
-        report = run_plan(plan)
+        report = run_plan(plan, deployment_context=make_deployment_context())
         assert report.completed_tasks == 2
         assert report.failed_tasks == 0
         assert report.skipped_tasks == 0
 
     def test_report_contains_all_tasks(self) -> None:
         plan = make_plan(make_node("x"), make_node("y"), make_node("z"))
-        report = run_plan(plan)
+        report = run_plan(plan, deployment_context=make_deployment_context())
         ids = {t.id for t in report.tasks}
         assert ids == {"x", "y", "z"}
 
     def test_report_timings_populated(self) -> None:
         plan = make_plan(make_node("t1"))
-        report = run_plan(plan)
+        report = run_plan(plan, deployment_context=make_deployment_context())
         assert report.started_at is not None
         assert report.completed_at is not None
         assert report.completed_at > report.started_at
 
     def test_report_timings_populated_on_failure(self) -> None:
         plan = make_plan(make_node("t1"))
-        report = run_plan(plan, handlers={"t1": always_fail})
+        report = run_plan(
+            plan,
+            handlers={"t1": always_fail},
+            deployment_context=make_deployment_context(),
+        )
         assert report.started_at is not None
         assert report.completed_at is not None
         assert report.completed_at > report.started_at
 
     def test_report_task_statuses_on_success(self) -> None:
         plan = make_plan(make_node("t1"), make_node("t2"))
-        report = run_plan(plan)
+        report = run_plan(plan, deployment_context=make_deployment_context())
         for task in report.tasks:
             assert task.status == ExecutionStatus.COMPLETED
 
@@ -370,6 +419,7 @@ class TestExecutionReport:
             plan,
             handlers={"t1": always_fail},
             stop_on_failure=True,
+            deployment_context=make_deployment_context(),
         )
         statuses = {t.id: t.status for t in report.tasks}
         assert statuses["t1"] == ExecutionStatus.FAILED
@@ -378,7 +428,11 @@ class TestExecutionReport:
 
     def test_report_custom_outputs_stored(self) -> None:
         plan = make_plan(make_node("t1"))
-        report = run_plan(plan, handlers={"t1": make_output("result_data")})
+        report = run_plan(
+            plan,
+            handlers={"t1": make_output("result_data")},
+            deployment_context=make_deployment_context(),
+        )
         assert report.tasks[0].output == "result_data"
 
 
@@ -399,7 +453,7 @@ class TestPlanningToExecution:
             {"id": "test", "description": "Run tests", "dependencies": ["build"]},
         ]
         plan = build_execution_plan(tasks)
-        report = run_plan(plan)
+        report = run_plan(plan, deployment_context=make_deployment_context())
 
         assert report.status == ExecutionStatus.COMPLETED
         assert report.completed_tasks == 3
@@ -413,7 +467,11 @@ class TestPlanningToExecution:
             {"id": "step2", "description": "Step 2", "dependencies": ["step1"]},
         ]
         plan = build_execution_plan(tasks)
-        report = run_plan(plan, handlers={"step1": always_fail})
+        report = run_plan(
+            plan,
+            handlers={"step1": always_fail},
+            deployment_context=make_deployment_context(),
+        )
 
         assert report.status == ExecutionStatus.FAILED
         assert report.failed_tasks == 1
@@ -433,7 +491,18 @@ class TestPlanningToExecution:
             },
         ]
         plan = build_execution_plan(tasks)
-        report = run_plan(plan)
+        report = run_plan(plan, deployment_context=make_deployment_context())
 
         assert report.status == ExecutionStatus.COMPLETED
         assert report.completed_tasks == 4
+
+
+class TestDeploymentContextInjection:
+    def test_runner_uses_explicit_deployment_context(self) -> None:
+        plan = make_plan(make_node("t1"))
+        report = run_plan(
+            plan,
+            deployment_context=make_deployment_context(environment="mock", provider_type="mock"),
+        )
+
+        assert report.status == ExecutionStatus.COMPLETED

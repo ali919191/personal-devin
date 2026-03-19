@@ -172,6 +172,26 @@ Defined in `requirements.txt`:
 - `pydantic`
 - `pytest`
 
+## Agent 28 — Deployment Context Injection
+
+### What was built
+- Deployment context injection layer
+- Immutable deployment context object
+- Strict separation between resolution and execution
+
+### Architecture decisions
+- Introduced context boundary to prevent mutation
+- Enforced deterministic execution inputs
+- Removed direct config access from execution layer
+
+### How to run
+- Context is built before execution
+- Passed explicitly into ExecutionRunner
+
+### Dependencies
+- environment_resolver
+- execution runner
+
 ---
 
 ## Agent 02 — Planning Engine
