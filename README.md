@@ -1128,3 +1128,57 @@ pytest -q
 - Reuses existing project modules:
   - app/core/logger
   - app/memory models/contracts
+
+## Agent 12 — Adaptive Execution Layer
+
+### What was built
+
+- New policy-driven adaptation module at `app/adaptation`.
+- Core adaptation model: `Adaptation` (`id`, `source`, `type`, `payload`, `confidence`).
+- Adaptation policies with strict validation and explicit application:
+  - `RetryLimitPolicy`
+  - `TimeoutPolicy`
+  - `PreferredToolPolicy`
+- Pluggable adaptation registry for mapping adaptation types to policies.
+- `AdaptationEngine` with deterministic lifecycle:
+  - `generate(improvement_output) -> list[Adaptation]`
+  - `filter_valid(adaptations) -> list[Adaptation]`
+  - `apply(adaptations, execution_context) -> dict`
+- Deterministic execution modifiers output for downstream execution context.
+
+### Architecture decisions
+
+- Strict no-mutation behavior:
+  - Adaptation engine returns modifiers only.
+  - It does not execute tasks and does not change execution/planning internals.
+- Policy gate is mandatory:
+  - Every adaptation type must have a registered policy.
+  - Validation and application are fully explicit and auditable.
+- Deterministic adaptation mapping:
+  - Static action-to-adaptation mapping.
+  - Stable adaptation IDs from input order.
+- Structured observability:
+  - `adaptation_generated`
+  - `adaptation_generation_skipped`
+  - `adaptation_validation`
+  - `adaptation_applied`
+  - `adaptation_rejected`
+
+### How to run
+
+Run adaptation tests:
+
+```bash
+pytest tests/test_adaptation_engine.py -q
+```
+
+Run full suite:
+
+```bash
+pytest -q
+```
+
+### Dependencies
+
+- No new third-party dependencies.
+- Reuses project logger and dataclass-based contracts.
