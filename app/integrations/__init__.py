@@ -1,11 +1,22 @@
-"""Public interface for integrations layer."""
+"""Public interface for the integrations layer."""
 
-from app.integrations.tool import Tool, ToolResult
-from app.integrations.registry import ToolRegistry, execute_tool
+from app.integrations.base import BaseIntegration
+from app.integrations.exceptions import (
+    IntegrationError,
+    IntegrationExecutionError,
+    IntegrationNotFoundError,
+)
+from app.integrations.manager import IntegrationManager
+from app.integrations.models import IntegrationRequest, IntegrationResponse
+from app.integrations.registry import IntegrationRegistry
 
 __all__ = [
-    "Tool",
-    "ToolResult",
-    "ToolRegistry",
-    "execute_tool",
+    "BaseIntegration",
+    "IntegrationError",
+    "IntegrationExecutionError",
+    "IntegrationNotFoundError",
+    "IntegrationManager",
+    "IntegrationRegistry",
+    "IntegrationRequest",
+    "IntegrationResponse",
 ]

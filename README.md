@@ -1540,3 +1540,76 @@ pytest tests/feedback
 
 - Evaluation engine outputs (`app.evaluation.models.EvaluationResult`)
 - Execution records (`app.execution.models.ExecutionReport`)
+
+---
+
+## Agent 21 — Integrations Layer
+
+### What was built
+
+- A production-grade integrations framework under `app/integrations/` with typed request/response models, controlled exceptions, a provider registry, and an execution manager.
+- Three built-in providers under `app/integrations/providers/`:
+  - `shell.py` for explicit local command execution with captured stdout/stderr and timeout controls.
+  - `http.py` for deterministic HTTP requests with explicit transport settings and no implicit retries.
+  - `mock.py` for repeatable offline/test executions with stable outputs for identical requests.
+- A full test suite under `tests/integrations/` covering registry behavior, manager orchestration, provider behavior, failure paths, and deterministic mock output validation.
+
+### Architecture decisions
+
+- Deterministic contract first:
+  - every provider accepts `IntegrationRequest` and returns `IntegrationResponse`
+  - no hidden retries and no implicit randomness
+  - provider-specific inputs live only in `payload` and `metadata`
+- Clean provider abstraction:
+  - all integrations implement `BaseIntegration`
+  - `IntegrationRegistry` resolves providers by name with no hardcoded dispatch
+- Observability:
+  - `IntegrationManager` emits structured lifecycle logs for request, resolution, response, and errors
+- Failure safety:
+  - missing providers raise `IntegrationNotFoundError`
+  - provider failures raise `IntegrationExecutionError`
+  - no silent failure paths are allowed
+- Future execution-engine compatibility:
+  - the manager and providers are isolated from planning, memory, and agent-loop internals
+  - future execution components can call the manager using the typed request/response contract
+
+### How to run
+
+Example usage:
+
+```python
+from datetime import UTC, datetime
+
+from app.integrations.manager import IntegrationManager
+from app.integrations.models import IntegrationRequest
+from app.integrations.providers.mock import MockIntegration
+from app.integrations.registry import IntegrationRegistry
+
+registry = IntegrationRegistry()
+registry.register(MockIntegration())
+
+manager = IntegrationManager(registry)
+
+request = IntegrationRequest(
+    id="demo-1",
+    integration="mock",
+    payload={"operation": "status"},
+    metadata={"source": "readme"},
+    timestamp=datetime.now(UTC),
+)
+
+response = manager.execute(request)
+print(response.model_dump())
+```
+
+Run the test suite:
+
+```bash
+pytest -q
+```
+
+### Dependencies
+
+- No new third-party dependencies were added.
+- Uses the Python standard library for shell and HTTP execution.
+- Reuses the existing project dependencies listed in `requirements.txt`, including Pydantic for typed models.

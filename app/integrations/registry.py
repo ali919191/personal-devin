@@ -1,34 +1,30 @@
+"""Registry for pluggable integration providers."""
+
 from __future__ import annotations
 
-from app.integrations.tool import Tool, ToolResult
+from app.integrations.base import BaseIntegration
+from app.integrations.exceptions import IntegrationNotFoundError
 
 
-class ToolRegistry:
-    def __init__(self):
-        self._tools: dict[str, Tool] = {}
+class IntegrationRegistry:
+    """Registers and resolves integration providers by name."""
 
-    def register(self, tool: Tool):
-        name = getattr(tool, "name", "")
+    def __init__(self) -> None:
+        self._integrations: dict[str, BaseIntegration] = {}
+
+    def register(self, integration: BaseIntegration) -> None:
+        name = getattr(integration, "name", "")
         if not isinstance(name, str) or not name.strip():
-            raise ValueError("tool.name must be a non-empty string")
-        if name in self._tools:
-            raise ValueError(f"tool already registered: {name}")
-        self._tools[name] = tool
+            raise ValueError("integration.name must be a non-empty string")
+        if name in self._integrations:
+            raise ValueError(f"integration already registered: {name}")
+        self._integrations[name] = integration
 
-    def get(self, name: str) -> Tool:
-        return self._tools[name]
+    def get(self, name: str) -> BaseIntegration:
+        try:
+            return self._integrations[name]
+        except KeyError as exc:
+            raise IntegrationNotFoundError(f"integration not found: {name}") from exc
 
     def list(self) -> list[str]:
-        return sorted(self._tools.keys())
-
-
-_REGISTRY = ToolRegistry()
-
-
-def register_tool(tool: Tool) -> None:
-    _REGISTRY.register(tool)
-
-
-def execute_tool(name: str, input: dict, context: dict) -> ToolResult:
-    tool = _REGISTRY.get(name)
-    return tool.execute(input=input, context=context)
+        return sorted(self._integrations.keys())
