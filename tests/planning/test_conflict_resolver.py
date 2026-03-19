@@ -199,5 +199,7 @@ def test_idempotency_same_input_same_output() -> None:
 
     first = resolver.resolve(adaptations)
     second = resolver.resolve(adaptations)
+    third = resolver.resolve(first)
 
     assert first == second
+    assert third == first
