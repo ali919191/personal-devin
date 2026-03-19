@@ -9,6 +9,20 @@ ExecutionRecordStatus = Literal["success", "failure"]
 
 
 @dataclass(frozen=True)
+class ExecutionError:
+    """Normalized error payload stored in execution audit records."""
+
+    type: str
+    message: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "type": self.type,
+            "message": self.message,
+        }
+
+
+@dataclass(frozen=True)
 class ExecutionRecord:
     """Append-only execution audit record."""
 
@@ -17,14 +31,16 @@ class ExecutionRecord:
     input: dict[str, Any]
     output: Any
     status: ExecutionRecordStatus
-    error: str | None = None
+    error: ExecutionError | None = None
+    schema_version: str = "v1"
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "schema_version": self.schema_version,
             "id": self.id,
             "timestamp": self.timestamp,
             "input": self.input,
             "output": self.output,
             "status": self.status,
-            "error": self.error,
+            "error": self.error.to_dict() if self.error is not None else None,
         }

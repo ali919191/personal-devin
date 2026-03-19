@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from app.execution.audit.audit_logger import AuditLogger
-from app.execution.audit.audit_models import ExecutionRecord
+from app.execution.audit.audit_models import ExecutionError, ExecutionRecord
 
 
 def _read_lines(path: Path) -> list[dict]:
@@ -31,6 +31,7 @@ def test_audit_logger_writes_single_record(tmp_path: Path) -> None:
 
     lines = _read_lines(log_path)
     assert len(lines) == 1
+    assert lines[0]["schema_version"] == "v1"
     assert lines[0]["id"] == "rec-001"
     assert lines[0]["status"] == "success"
 
@@ -53,7 +54,7 @@ def test_audit_logger_is_append_only(tmp_path: Path) -> None:
         input={"operation": "deploy"},
         output=None,
         status="failure",
-        error="boom",
+        error=ExecutionError(type="ValueError", message="boom"),
     )
 
     logger.write_record(first)
@@ -61,10 +62,26 @@ def test_audit_logger_is_append_only(tmp_path: Path) -> None:
 
     lines = _read_lines(log_path)
     assert [entry["id"] for entry in lines] == ["rec-001", "rec-002"]
+    assert lines[0]["schema_version"] == "v1"
+    assert lines[1]["schema_version"] == "v1"
     assert lines[0]["output"] == {"ok": True}
-    assert lines[1]["error"] == "boom"
+    assert lines[1]["error"]["type"] == "ValueError"
+    assert "message" in lines[1]["error"]
+    assert lines[1]["error"]["message"] == "boom"
 
 
 def test_audit_logger_uses_deterministic_default_path() -> None:
     logger = AuditLogger()
     assert str(logger.log_path).endswith("logs/execution_audit.jsonl")
+
+
+def test_audit_logger_uses_env_override_when_no_explicit_path(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    env_path = tmp_path / "from-env" / "audit.jsonl"
+    monkeypatch.setenv("EXECUTION_AUDIT_LOG_PATH", str(env_path))
+
+    logger = AuditLogger()
+
+    assert logger.log_path == env_path

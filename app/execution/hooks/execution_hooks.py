@@ -8,7 +8,7 @@ from hashlib import sha256
 from typing import Any, Callable
 
 from app.execution.audit.audit_logger import AuditLogger
-from app.execution.audit.audit_models import ExecutionRecord
+from app.execution.audit.audit_models import ExecutionError, ExecutionRecord
 from app.execution.policy.execution_policy import ExecutionPolicy
 from app.execution.policy.policy_validator import PolicyValidationError, PolicyValidator
 
@@ -65,14 +65,24 @@ def execute_with_policy(
         active_audit_logger.write_record(record)
         return output
     except Exception as exc:  # noqa: BLE001
-        failure_code = exc.code if isinstance(exc, PolicyValidationError) else None
+        if isinstance(exc, PolicyValidationError):
+            error_payload = ExecutionError(
+                type=exc.__class__.__name__,
+                message=f"{exc.code}:{exc}",
+            )
+        else:
+            error_payload = ExecutionError(
+                type=exc.__class__.__name__,
+                message=str(exc),
+            )
+
         record = ExecutionRecord(
             id=active_record_id_factory(request_snapshot, timestamp),
             timestamp=timestamp,
             input=request_snapshot,
             output=None,
             status="failure",
-            error=f"{failure_code}:{exc}" if failure_code else str(exc),
+            error=error_payload,
         )
         active_audit_logger.write_record(record)
         raise

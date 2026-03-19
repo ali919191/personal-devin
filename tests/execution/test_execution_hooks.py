@@ -55,6 +55,7 @@ def test_execute_with_policy_success_writes_audit(tmp_path: Path) -> None:
 
     entries = _read_entries(audit_path)
     assert len(entries) == 1
+    assert entries[0]["schema_version"] == "v1"
     assert entries[0]["id"] == "id::build::2026-03-19T12:00:00+00:00"
     assert entries[0]["status"] == "success"
     assert entries[0]["error"] is None
@@ -83,9 +84,12 @@ def test_execute_with_policy_blocked_fails_and_logs(tmp_path: Path) -> None:
 
     entries = _read_entries(audit_path)
     assert len(entries) == 1
+    assert entries[0]["schema_version"] == "v1"
     assert entries[0]["status"] == "failure"
+    assert isinstance(entries[0]["error"], dict)
+    assert entries[0]["error"]["type"] == "PolicyValidationError"
+    assert "operation_blocked" in entries[0]["error"]["message"]
     assert entries[0]["output"] is None
-    assert "operation_blocked" in entries[0]["error"]
 
 
 def test_execute_with_policy_engine_failure_is_logged(tmp_path: Path) -> None:
@@ -110,8 +114,11 @@ def test_execute_with_policy_engine_failure_is_logged(tmp_path: Path) -> None:
 
     entries = _read_entries(audit_path)
     assert len(entries) == 1
+    assert entries[0]["schema_version"] == "v1"
     assert entries[0]["status"] == "failure"
-    assert entries[0]["error"] == "engine exploded"
+    assert isinstance(entries[0]["error"], dict)
+    assert entries[0]["error"]["type"] == "RuntimeError"
+    assert entries[0]["error"]["message"] == "engine exploded"
 
 
 def test_execute_with_policy_is_deterministic_for_fixed_clock_and_id(tmp_path: Path) -> None:
