@@ -435,6 +435,25 @@ Completed:  4/4
 - Standard library only (`datetime`, `enum`, `collections.abc`).
 - Reuses `app.core.logger` and `app.planning.models` from existing layers.
 
+## Agent 29 — Execution Isolation / Sandboxing
+
+### What was built
+- ExecutionSandbox for safe callable execution
+- Builtin restriction layer
+- Import control via custom __import__
+- Full routing of execution through sandbox
+
+### Architecture decisions
+- Callable-based sandbox (no exec/eval)
+- In-process isolation via builtins patching
+- Deterministic and stateless execution model
+
+### How to run
+pytest tests/execution/test_sandbox.py
+
+### Dependencies
+- None
+
 ---
 
 ## Agent 04 — Memory System
