@@ -92,7 +92,3 @@ class MockAPITool(Tool):
                 "error": result.error,
             }
         )
-
-
-# Backward-compatible alias for existing imports.
-MockAPIIntegration = MockAPITool

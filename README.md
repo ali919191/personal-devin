@@ -563,23 +563,24 @@ Integrations are additive only
 
 How to run
 1. Register integrations
-from app.integrations.registry import IntegrationRegistry
-from app.integrations.filesystem import FilesystemIntegration
-from app.integrations.mock_api import MockAPIIntegration
+from app.integrations.registry import ToolRegistry
+from app.integrations.filesystem import FilesystemTool
+from app.integrations.mock_api import MockAPITool
 
-registry = IntegrationRegistry()
+registry = ToolRegistry()
 
-registry.register(FilesystemIntegration(root_dir="./data"))
-registry.register(MockAPIIntegration())
+registry.register(FilesystemTool(root_dir="./data"))
+registry.register(MockAPITool())
 2. Execute an integration
 integration = registry.get("filesystem")
 
 result = integration.execute(
-    action="write_file",
-    payload={
+  input={
+    "action": "write_file",
         "path": "test.txt",
         "content": "hello world"
-    }
+  },
+  context={}
 )
 
 print(result)
@@ -663,7 +664,7 @@ Run this sequence **after Copilot generates code**:
 
 ### 1. Imports must resolve
 ```bash
-python -c "from app.integrations.registry import IntegrationRegistry"
+python -c "from app.integrations.registry import ToolRegistry"
 2. Run full tests
 python -m pytest tests/ -v
 
@@ -681,11 +682,11 @@ python
 
 Run:
 
-from app.integrations.registry import IntegrationRegistry
-from app.integrations.filesystem import FilesystemIntegration
+from app.integrations.registry import ToolRegistry
+from app.integrations.filesystem import FilesystemTool
 
-registry = IntegrationRegistry()
-registry.register(FilesystemIntegration(root_dir="./tmp"))
+registry = ToolRegistry()
+registry.register(FilesystemTool(root_dir="./tmp"))
 
 fs = registry.get("filesystem")
 
@@ -704,9 +705,9 @@ Expected:
 
 status = "error"
 5. Mock API validation
-from app.integrations.mock_api import MockAPIIntegration
+from app.integrations.mock_api import MockAPITool
 
-api = MockAPIIntegration()
+api = MockAPITool()
 
 print(api.execute("GET", {"endpoint": "/users"}))
 print(api.execute("POST", {"endpoint": "/users", "data": {"id": 1}}))

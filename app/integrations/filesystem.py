@@ -110,7 +110,3 @@ class FilesystemTool(Tool):
                 "error": result.error,
             }
         )
-
-
-# Backward-compatible alias for existing imports.
-FilesystemIntegration = FilesystemTool
