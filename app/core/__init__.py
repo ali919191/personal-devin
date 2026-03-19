@@ -1,13 +1,6 @@
 """Core module."""
 
 from app.core.logger import StructuredLogger, get_logger
-from app.core.orchestrator import (
-	OrchestrationController,
-	OrchestrationPhaseTrace,
-	OrchestrationRequest,
-	OrchestrationResult,
-	run_system,
-)
 from app.core.recovery import (
 	DeterministicFailureError,
 	FailureCategory,
@@ -26,8 +19,6 @@ from app.core.state import (
 	SystemStateMachine,
 	SystemStateSnapshot,
 )
-
-Orchestrator = OrchestrationController
 
 __all__ = [
 	"StructuredLogger",
@@ -52,4 +43,34 @@ __all__ = [
 	"OrchestrationController",
 	"Orchestrator",
 	"run_system",
-]
+	]
+
+
+def __getattr__(name: str):
+	if name in {
+		"OrchestrationRequest",
+		"OrchestrationPhaseTrace",
+		"OrchestrationResult",
+		"OrchestrationController",
+		"run_system",
+		"Orchestrator",
+	}:
+		from app.core.orchestrator import (
+			OrchestrationController,
+			OrchestrationPhaseTrace,
+			OrchestrationRequest,
+			OrchestrationResult,
+			run_system,
+		)
+
+		mapping = {
+			"OrchestrationRequest": OrchestrationRequest,
+			"OrchestrationPhaseTrace": OrchestrationPhaseTrace,
+			"OrchestrationResult": OrchestrationResult,
+			"OrchestrationController": OrchestrationController,
+			"run_system": run_system,
+			"Orchestrator": OrchestrationController,
+		}
+		return mapping[name]
+
+	raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

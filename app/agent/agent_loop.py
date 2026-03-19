@@ -16,7 +16,7 @@ from app.execution.models import ExecutionReport, ExecutionStatus, ExecutionTask
 from app.execution.runner import run_plan
 from app.memory.service import MemoryService
 from app.planning.models import Adaptation
-from app.planning import build_execution_plan
+from app.planning import build_execution_plan, plan as plan_task
 from app.planning.conflict_resolver import ConflictResolver
 from app.self_improvement.engine import SelfImprovementEngine
 
@@ -46,7 +46,9 @@ class AgentLoop:
         if now_fn is None:
             raise ValueError("now_fn must be provided for deterministic execution")
         self._now_fn = now_fn
-        self._memory = memory_service or MemoryService()
+        self._memory = memory_service or MemoryService(now_fn=self._now_fn)
+        if hasattr(self._memory, "set_now_fn"):
+            self._memory.set_now_fn(self._now_fn)
         self._conflict_resolver = conflict_resolver or ConflictResolver()
         self._retry_policy = retry_policy or RetryPolicy(max_attempts=3)
         self._loop_logger = loop_logger or LoopLogger(now_fn=self._now_fn)
@@ -196,7 +198,11 @@ class AgentLoop:
 
     def _plan(self, goal: str) -> _PlanContext:
         tasks = self._goal_to_tasks(goal)
-        plan = build_execution_plan(tasks)
+        feedback_context = self._memory.get_feedback_context(task_id=self._last_iteration_id)
+        if len(tasks) == 1:
+            plan = plan_task(tasks[0], context=feedback_context)
+        else:
+            plan = build_execution_plan(tasks)
         planned_adaptations = self._collect_planned_adaptations(plan)
         resolved_adaptations = self._conflict_resolver.resolve(planned_adaptations)
         return _PlanContext(
@@ -306,6 +312,36 @@ class AgentLoop:
         status: str,
         resolved_adaptation_count: int,
     ) -> None:
+        tasks: list[ExecutionTask] = list(metrics["tasks"])
+        task_errors = [
+            str(task.error or task.skip_reason)
+            for task in tasks
+            if task.status in {ExecutionStatus.FAILED, ExecutionStatus.SKIPPED}
+            and (task.error or task.skip_reason)
+        ]
+
+        self._memory.record_execution(
+            task_id=self.deterministic_iteration_id(goal),
+            input={"goal": goal},
+            plan={
+                "task_ids": [task.id for task in plan.ordered_tasks],
+                "total_tasks": len(plan.ordered_tasks),
+            },
+            result={
+                "status": status,
+                "total_tasks": int(metrics["total"]),
+                "completed_tasks": int(metrics["completed"]),
+                "failed_tasks": int(metrics["failed"]),
+                "skipped_tasks": int(metrics["skipped"]),
+            },
+            success=status == SUCCESS,
+            errors=task_errors,
+            metadata={
+                "source": "agent_loop",
+                "resolved_adaptations": resolved_adaptation_count,
+            },
+        )
+
         self._memory.log_execution(
             status=status,
             total_tasks=int(metrics["total"]),
@@ -323,7 +359,6 @@ class AgentLoop:
             },
         )
 
-        tasks: list[ExecutionTask] = list(metrics["tasks"])
         for task in tasks:
             self._memory.log_task(
                 task_id=task.id,
