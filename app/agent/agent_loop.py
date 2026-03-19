@@ -12,6 +12,10 @@ from app.agent.logger import LoopLogger
 from app.agent.loop_state import LoopState, LoopStatus, LoopStep, utc_timestamp
 from app.agent.retry import FailureType, RetryPolicy, classify_failure
 from app.agent.schemas import AgentResult, ReflectionResult
+from app.adaptation.engine import AdaptationEngine
+from app.adaptation.models import Adaptation as RuntimeAdaptation
+from app.evaluation.evaluator import Evaluator
+from app.evaluation.models import EvaluationInput
 from app.evaluation.models import EvaluationResult
 from app.execution.models import ExecutionReport, ExecutionStatus, ExecutionTask
 from app.execution.runner import run_plan
@@ -40,7 +44,9 @@ class AgentLoop:
         self,
         memory_service: MemoryService | None = None,
         self_improvement_engine: SelfImprovementEngine | None = None,
+        evaluator: Evaluator | None = None,
         feedback_engine: FeedbackEngine | None = None,
+        adaptation_engine: AdaptationEngine | None = None,
         conflict_resolver: ConflictResolver | None = None,
         retry_policy: RetryPolicy | None = None,
         loop_logger: LoopLogger | None = None,
@@ -55,7 +61,9 @@ class AgentLoop:
         self._conflict_resolver = conflict_resolver or ConflictResolver()
         self._retry_policy = retry_policy or RetryPolicy(max_attempts=3)
         self._loop_logger = loop_logger or LoopLogger(now_fn=self._now_fn)
+        self._evaluator = evaluator or Evaluator()
         self._feedback_engine = feedback_engine or FeedbackEngine(now_fn=self._now_fn)
+        self._adaptation_engine = adaptation_engine or AdaptationEngine()
         self._state_history: list[LoopState] = []
         self._last_iteration_id = ""
 
@@ -237,40 +245,30 @@ class AgentLoop:
         return metrics, status, evaluation_result, feedback_signal
 
     def _evaluate(self, execution_report: ExecutionReport, status: str) -> EvaluationResult:
-        total = max(int(execution_report.total_tasks), 0)
-        completed = max(int(execution_report.completed_tasks), 0)
-        failed = max(int(execution_report.failed_tasks), 0)
-        skipped = max(int(execution_report.skipped_tasks), 0)
-
-        if total == 0:
-            score = 1.0
-            match_type = "no_tasks"
-        else:
-            score = completed / total
-            match_type = "exact" if failed == 0 and skipped == 0 else "failure"
-
-        feedback = {
-            SUCCESS: "Execution meets expected outcome.",
-            PARTIAL: "Execution partially met expected outcome.",
-            FAILURE: "Execution did not meet expected outcome.",
-        }[status]
-
-        return EvaluationResult(
+        evaluation_input = EvaluationInput(
             task_id=self._last_iteration_id,
-            success=status == SUCCESS,
-            score=round(score, 4),
-            feedback=feedback,
-            metrics={
+            expected_output="completed",
+            actual_output=self._evaluation_actual_output(execution_report, status),
+            metadata={
                 "status": status,
-                "completed_tasks": completed,
-                "failed_tasks": failed,
-                "skipped_tasks": skipped,
-                "total_tasks": total,
-                "match_type": match_type,
+                "total_tasks": int(execution_report.total_tasks),
+                "completed_tasks": int(execution_report.completed_tasks),
+                "failed_tasks": int(execution_report.failed_tasks),
+                "skipped_tasks": int(execution_report.skipped_tasks),
             },
         )
+        return self._evaluator.evaluate(evaluation_input)
+
+    def _evaluation_actual_output(self, execution_report: ExecutionReport, status: str) -> str:
+        if int(execution_report.failed_tasks) == 0 and int(execution_report.skipped_tasks) == 0:
+            return "completed"
+        if status == PARTIAL:
+            return "completed_with_failures"
+        return "failed"
 
     def _route_feedback_to_adaptation_inputs(self, feedback_signal: FeedbackSignal) -> None:
+        runtime_adaptations = self._adaptation_engine.process_feedback(feedback_signal)
+
         self._memory.log_decision(
             decision="feedback_signal",
             reason="evaluation_to_feedback_mapping",
@@ -282,6 +280,7 @@ class AgentLoop:
                 "improvement_suggestions": list(feedback_signal.improvement_suggestions),
                 "confidence": feedback_signal.confidence,
                 "timestamp": feedback_signal.timestamp.isoformat(),
+                "adaptation_candidates": self._serialize_runtime_adaptations(runtime_adaptations),
             },
         )
 
@@ -295,6 +294,21 @@ class AgentLoop:
                     "suggestions": list(feedback_signal.improvement_suggestions),
                 },
             )
+
+    def _serialize_runtime_adaptations(
+        self,
+        adaptations: list[RuntimeAdaptation],
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": adaptation.id,
+                "type": adaptation.type,
+                "source": adaptation.source,
+                "confidence": adaptation.confidence,
+                "payload": dict(adaptation.payload),
+            }
+            for adaptation in adaptations
+        ]
 
     def _reflect_step(
         self,

@@ -5,8 +5,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.adaptation.models import Adaptation
 from app.agent.agent_loop import AgentLoop
 from app.agent.loop_state import LoopStatus, LoopStep
+from app.evaluation.models import EvaluationResult
 from app.execution.models import ExecutionReport, ExecutionStatus, ExecutionTask
 from app.feedback.engine import FeedbackEngine
 from app.planning.models import ExecutionGroup, ExecutionPlan, PlanMetadata, TaskNode
@@ -209,15 +211,37 @@ def test_feedback_stage_runs_and_routes_to_adaptation_inputs(
     run_plan_mock.return_value = report
 
     memory = MagicMock()
+    evaluator = MagicMock()
+    evaluator.evaluate.return_value = EvaluationResult(
+        task_id="iter-test",
+        success=False,
+        score=0.0,
+        feedback="execution failed",
+        metrics={"match_type": "failure", "score": 0.0},
+    )
+    adaptation_engine = MagicMock()
+    adaptation_engine.process_feedback.return_value = [
+        Adaptation(
+            id="adaptation-001",
+            source="feedback:iter-test",
+            type="retry_limit",
+            payload={"retry_limit": 3},
+            confidence=0.75,
+        )
+    ]
     loop = AgentLoop(
         memory_service=memory,
         self_improvement_engine=MagicMock(),
+        evaluator=evaluator,
         feedback_engine=FeedbackEngine(now_fn=fixed_now),
+        adaptation_engine=adaptation_engine,
         now_fn=fixed_now,
     )
     result = loop.run("Goal")
 
     assert result.status == "failure"
+    assert evaluator.evaluate.call_count == 1
+    adaptation_engine.process_feedback.assert_called_once()
     assert memory.log_decision.call_count >= 2
     decisions = [
         call.kwargs.get("decision")

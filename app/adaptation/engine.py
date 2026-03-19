@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from typing import Any
 
 from app.adaptation.models import Adaptation
 from app.adaptation.registry import AdaptationRegistry, create_default_registry
 from app.core.logger import get_logger
+from app.feedback.models import FeedbackSignal
 
 logger = get_logger(__name__)
 
@@ -114,6 +116,41 @@ class AdaptationEngine:
 
         return modifiers
 
+    def process_feedback(self, feedback_signal: FeedbackSignal) -> list[Adaptation]:
+        """Convert a feedback signal into deterministic adaptation candidates."""
+        if feedback_signal.success:
+            return []
+
+        ordered_actions: OrderedDict[str, None] = OrderedDict()
+        for suggestion in feedback_signal.improvement_suggestions:
+            action_type = self._map_feedback_suggestion_to_action(str(suggestion))
+            if action_type is None:
+                continue
+            ordered_actions[action_type] = None
+
+        improvement_output: list[dict[str, Any]] = [
+            {
+                "action_type": action_type,
+                "source": f"feedback:{feedback_signal.execution_id}",
+                "confidence": feedback_signal.confidence,
+            }
+            for action_type in ordered_actions.keys()
+        ]
+
+        generated = self.generate(improvement_output)
+        valid = self.filter_valid(generated)
+        logger.info(
+            "adaptation_feedback_processed",
+            {
+                "execution_id": feedback_signal.execution_id,
+                "failure_type": feedback_signal.failure_type,
+                "suggestion_count": len(feedback_signal.improvement_suggestions),
+                "generated_count": len(generated),
+                "valid_count": len(valid),
+            },
+        )
+        return valid
+
     def _map_action_to_adaptation(self, action_type: str) -> tuple[str | None, dict[str, Any] | None]:
         mapping: dict[str, tuple[str, dict[str, Any]]] = {
             "retry_strategy": ("retry_limit", {"retry_limit": 3}),
@@ -121,3 +158,18 @@ class AdaptationEngine:
             "increase_logging": ("preferred_tool", {"preferred_tool": "api"}),
         }
         return mapping.get(action_type, (None, None))
+
+    def _map_feedback_suggestion_to_action(self, suggestion: str) -> str | None:
+        mapping: dict[str, str] = {
+            "add_task_level_retry_with_backoff": "retry_strategy",
+            "introduce_precondition_validation": "increase_logging",
+            "inspect_failed_task_dependencies": "retry_strategy",
+            "tighten_task_input_validation": "increase_logging",
+            "promote_dependency_health_checks": "increase_logging",
+            "add_fallback_path_for_blocked_dependencies": "retry_strategy",
+            "refine_expected_output_constraints": "optimize_execution",
+            "add_post_execution_output_sanitization": "optimize_execution",
+            "increase_assertion_coverage_for_outputs": "increase_logging",
+            "tighten_evaluation_thresholds": "optimize_execution",
+        }
+        return mapping.get(suggestion.strip())
