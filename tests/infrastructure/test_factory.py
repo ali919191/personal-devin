@@ -23,10 +23,16 @@ def test_factory_resolves_mock_provider() -> None:
     assert isinstance(provider, MockInfrastructureProvider)
 
 
-def test_factory_resolution_is_case_insensitive_and_deterministic() -> None:
-    first = get_provider(" AKS ")
+def test_factory_returns_fresh_instance_per_call() -> None:
+    first = get_provider("aks")
     second = get_provider("aks")
-    assert first is second
+    assert first is not second
+    assert type(first) is type(second)
+
+
+def test_factory_is_case_insensitive() -> None:
+    provider = get_provider(" AKS ")
+    assert isinstance(provider, AKSInfrastructureProvider)
 
 
 def test_factory_rejects_unknown_environment() -> None:

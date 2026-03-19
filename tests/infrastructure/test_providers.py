@@ -7,6 +7,7 @@ from dataclasses import replace
 from app.core.deployment_context import DeploymentContext
 from app.execution.models import ExecutionStatus
 from app.execution.runner import run_plan
+from app.infrastructure.base import DefaultInfrastructureContext, InfrastructureResult
 from app.infrastructure.providers.aks import AKSInfrastructureProvider
 from app.infrastructure.providers.local import LocalInfrastructureProvider
 from app.infrastructure.providers.mock import MockInfrastructureProvider
@@ -65,6 +66,73 @@ def test_mock_provider_is_fully_stable() -> None:
 
     assert first == second
     assert first.details["stable"] is True
+
+
+def test_providers_do_not_mutate_context() -> None:
+    context = make_context("local")
+    before = context.to_dict()
+
+    LocalInfrastructureProvider().deploy(context)
+    AKSInfrastructureProvider().status(replace(context, environment="aks"))
+    MockInfrastructureProvider().destroy(replace(context, environment="mock"))
+
+    after = context.to_dict()
+    assert after == before
+
+
+def test_execution_runner_uses_infrastructure_provider_abstraction() -> None:
+    plan = make_plan()
+    context = make_context("mock")
+
+    report = run_plan(plan, infrastructure_context=context)
+
+    assert report.status == ExecutionStatus.COMPLETED
+    assert report.completed_tasks == 1
+
+
+def test_execution_always_routes_through_provider_even_without_explicit_context() -> None:
+    """Execution must always go through a provider; local is the default fallback."""
+    plan = make_plan()
+
+    report = run_plan(plan)
+
+    assert report.status == ExecutionStatus.COMPLETED
+    assert report.completed_tasks == 1
+
+
+def test_default_infrastructure_context_satisfies_protocol() -> None:
+    ctx = DefaultInfrastructureContext()
+    provider = LocalInfrastructureProvider()
+
+    result = provider.deploy(ctx)
+
+    assert result.state == "deployed"
+    assert result.provider == "local"
+    assert result.environment == "local"
+
+
+def test_infrastructure_result_carries_failure_fields() -> None:
+    result = InfrastructureResult(
+        action="deploy",
+        provider="local",
+        environment="local",
+        state="failed",
+        error="simulated_failure",
+    )
+
+    assert result.state == "failed"
+    assert result.error == "simulated_failure"
+
+
+def test_infrastructure_result_error_is_none_on_success() -> None:
+    result = InfrastructureResult(
+        action="deploy",
+        provider="mock",
+        environment="mock",
+        state="deployed",
+    )
+
+    assert result.error is None
 
 
 def test_providers_do_not_mutate_context() -> None:

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from app.core.logger import get_logger
+from app.infrastructure.base import InfrastructureContext, InfrastructureProvider, InfrastructureResult
 
-from app.infrastructure.base import ContextInput, InfrastructureProvider, InfrastructureResult
+_logger = get_logger(__name__)
 
 
 class AKSInfrastructureProvider(InfrastructureProvider):
@@ -12,64 +13,67 @@ class AKSInfrastructureProvider(InfrastructureProvider):
 
     _PROVIDER_NAME = "aks"
 
-    def deploy(self, context: ContextInput) -> InfrastructureResult:
-        payload = _canonicalize_context(context)
-        services = tuple(payload.get("services", []))
-        execution_id = str(payload.get("execution_id", "unknown"))
-        return InfrastructureResult(
+    def deploy(self, context: InfrastructureContext) -> InfrastructureResult:
+        _logger.info("infra.deploy.start", {
+            "provider": self._PROVIDER_NAME,
+            "environment": context.environment,
+            "execution_id": context.execution_id,
+        })
+        result = InfrastructureResult(
             action="deploy",
             provider=self._PROVIDER_NAME,
-            environment=str(payload.get("environment", "aks")),
+            environment=context.environment,
             state="deployed",
             details={
-                "cluster": f"aks-{execution_id}",
+                "cluster": f"aks-{context.execution_id}",
                 "node_pool": "system",
-                "services": services,
+                "services": tuple(context.services),
                 "simulation": True,
             },
         )
+        _logger.info("infra.deploy.result", {
+            "provider": self._PROVIDER_NAME,
+            "state": result.state,
+            "environment": result.environment,
+        })
+        return result
 
-    def destroy(self, context: ContextInput) -> InfrastructureResult:
-        payload = _canonicalize_context(context)
-        execution_id = str(payload.get("execution_id", "unknown"))
-        return InfrastructureResult(
+    def destroy(self, context: InfrastructureContext) -> InfrastructureResult:
+        _logger.info("infra.destroy.start", {
+            "provider": self._PROVIDER_NAME,
+            "environment": context.environment,
+            "execution_id": context.execution_id,
+        })
+        result = InfrastructureResult(
             action="destroy",
             provider=self._PROVIDER_NAME,
-            environment=str(payload.get("environment", "aks")),
+            environment=context.environment,
             state="destroyed",
-            details={"cluster": f"aks-{execution_id}", "simulation": True},
+            details={"cluster": f"aks-{context.execution_id}", "simulation": True},
         )
+        _logger.info("infra.destroy.result", {
+            "provider": self._PROVIDER_NAME,
+            "state": result.state,
+            "environment": result.environment,
+        })
+        return result
 
-    def status(self, context: ContextInput) -> InfrastructureResult:
-        payload = _canonicalize_context(context)
-        execution_id = str(payload.get("execution_id", "unknown"))
-        return InfrastructureResult(
+    def status(self, context: InfrastructureContext) -> InfrastructureResult:
+        _logger.info("infra.status.start", {
+            "provider": self._PROVIDER_NAME,
+            "environment": context.environment,
+            "execution_id": context.execution_id,
+        })
+        result = InfrastructureResult(
             action="status",
             provider=self._PROVIDER_NAME,
-            environment=str(payload.get("environment", "aks")),
+            environment=context.environment,
             state="ready",
-            details={"cluster": f"aks-{execution_id}", "simulation": True},
+            details={"cluster": f"aks-{context.execution_id}", "simulation": True},
         )
-
-
-def _canonicalize_context(context: ContextInput) -> dict[str, Any]:
-    payload = _to_payload(context)
-    return _canonicalize(payload)
-
-
-def _to_payload(context: ContextInput) -> dict[str, Any]:
-    if isinstance(context, Mapping):
-        payload = dict(context)
-    else:
-        payload = context.to_dict() if hasattr(context, "to_dict") else {}
-        if "environment" not in payload:
-            payload["environment"] = getattr(context, "environment", "")
-    return payload
-
-
-def _canonicalize(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {str(key): _canonicalize(value[key]) for key in sorted(value, key=str)}
-    if isinstance(value, list):
-        return [_canonicalize(item) for item in value]
-    return value
+        _logger.info("infra.status.result", {
+            "provider": self._PROVIDER_NAME,
+            "state": result.state,
+            "environment": result.environment,
+        })
+        return result
