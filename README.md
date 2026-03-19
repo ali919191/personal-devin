@@ -1394,6 +1394,11 @@ pytest -q
 - Terminal states are final; no transitions are allowed out of `COMPLETED` or `FAILED`.
 - Reproducibility depends on explicit inputs, ordered transitions, and bounded retry policy only.
 
+### Deprecation Notice
+
+Legacy orchestration module will be removed in Agent 18.
+All imports must migrate to `app.core.Orchestrator`.
+
 ### How to run
 
 Run Agent 16 tests:
