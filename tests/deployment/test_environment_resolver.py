@@ -152,6 +152,12 @@ def test_resolve_case_sensitive_prod_upper() -> None:
         resolver.resolve("PROD")
 
 
+def test_resolve_whitespace_wrapped_environment_fails_without_trimming() -> None:
+    resolver = _make_resolver()
+    with pytest.raises(ValueError, match="Unknown environment"):
+        resolver.resolve(" dev ")
+
+
 # ---------------------------------------------------------------------------
 # 3. test_deterministic_output
 # ---------------------------------------------------------------------------

@@ -170,16 +170,15 @@ class EnvironmentResolver:
             There is intentionally no fallback — unknown environments must
             be explicitly defined and committed.
         """
-        if not isinstance(environment, str) or not environment.strip():
+        if not isinstance(environment, str) or environment == "":
             raise ValueError("environment must be a non-empty string")
-        env_key = environment.strip()
-        if env_key not in self._config:
+        if environment not in self._config:
             known = sorted(self._config.keys())
             raise ValueError(
-                f"Unknown environment: {env_key!r}. "
+                f"Unknown environment: {environment!r}. "
                 f"Registered environments: {known}"
             )
-        return self._config[env_key]
+        return self._config[environment]
 
     @property
     def registered_environments(self) -> frozenset[str]:
