@@ -1475,3 +1475,31 @@ flake8 .
 
 - `flake8` (added for deterministic linting and required pre-push validation).
 - No runtime dependencies beyond the repository's existing Python stack.
+
+---
+
+## Agent 19 — Evaluation Engine
+
+### What was built
+
+- Deterministic evaluation system for execution outputs.
+- `Evaluator` — pure function evaluation with three deterministic tiers: exact match (1.0), partial string match (0.5), and failure (0.0).
+- `EvaluationService` — orchestration layer that calls the evaluator and persists structured results into the memory system via `MemoryService.log_decision`.
+- Structured logging at every stage: `evaluation_started`, `evaluation_completed`, `evaluation_service_started`, `evaluation_service_completed`.
+
+### Architecture decisions
+
+- **Pure evaluator** — `Evaluator.evaluate` is a side-effect-free, deterministic function: no randomness, no timestamps, no I/O.
+- **Service layer for orchestration** — `EvaluationService` owns the evaluate-then-store lifecycle and accepts memory injection for testability.
+- **Memory integration via `log_decision`** — reuses the existing `MemoryService` interface without modifying memory internals.
+- **Frozen dataclasses** — `EvaluationInput` and `EvaluationResult` are immutable by design.
+
+### How to run
+
+```bash
+pytest tests/evaluation -v
+```
+
+### Dependencies
+
+- None external. All dependencies are part of the existing repository stack.
