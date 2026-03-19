@@ -1,18 +1,15 @@
-"""Filesystem integration constrained to a safe root directory."""
+"""Filesystem tool constrained to a safe root directory."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict
 
-from app.core.logger import get_logger
-from app.integrations.base import Integration
-
-logger = get_logger(__name__)
+from app.integrations.tool import Tool, ToolResult
 
 
-class FilesystemIntegration(Integration):
-    """Deterministic filesystem integration with root-constrained access."""
+class FilesystemTool(Tool):
+    """Deterministic filesystem tool with root-constrained access."""
 
     name = "filesystem"
 
@@ -24,59 +21,49 @@ class FilesystemIntegration(Integration):
             raise ValueError("root_dir must be a directory")
         self._root = root
 
-    def execute(self, action: str, payload: dict[str, Any]) -> dict[str, Any]:
-        payload = self._validate_payload(payload)
-        sanitized_payload = self._sanitize_payload(action, payload)
-        logger.info(
-            "filesystem_action_started",
-            {"action": action, "payload": sanitized_payload},
-        )
-
+    def execute(self, input: Dict[str, Any], context: Dict[str, Any]) -> ToolResult:
+        result: ToolResult
         try:
+            action = str(input.get("action", ""))
             if action == "read_file":
-                result = self._read_file(payload)
+                output = self._read_file(input)
+                result = ToolResult(success=True, output=output)
             elif action == "write_file":
-                result = self._write_file(payload)
+                output = self._write_file(input)
+                result = ToolResult(success=True, output=output)
             elif action == "list_dir":
-                result = self._list_dir(payload)
+                output = self._list_dir(input)
+                result = ToolResult(success=True, output=output)
             else:
-                return self._error(f"unsupported filesystem action: {action}")
-        except Exception as exc:  # pragma: no cover - guarded by tests via behavior
-            logger.error(
-                "filesystem_action_failed",
-                error=str(exc),
-                data={"action": action, "payload": sanitized_payload},
-            )
-            return self._error(str(exc))
+                result = ToolResult(success=False, error=f"unsupported filesystem action: {action}")
+        except Exception as e:
+            result = ToolResult(success=False, error=str(e))
 
-        logger.info(
-            "filesystem_action_completed",
-            {"action": action, "result_keys": sorted(result.keys())},
-        )
-        return self._success(result)
+        self._append_trace(context=context, input=input, result=result)
+        return result
 
     def _resolve_path(self, relative_path: str) -> Path:
         if not isinstance(relative_path, str) or not relative_path.strip():
-            raise ValueError("payload.path must be a non-empty string")
+            raise ValueError("input.path must be a non-empty string")
 
         candidate = (self._root / relative_path).resolve()
         if not candidate.is_relative_to(self._root):
             raise ValueError("path traversal is not allowed")
         return candidate
 
-    def _read_file(self, payload: dict[str, Any]) -> dict[str, Any]:
-        file_path = self._resolve_path(str(payload.get("path", "")))
+    def _read_file(self, input: Dict[str, Any]) -> Dict[str, Any]:
+        file_path = self._resolve_path(str(input.get("path", "")))
         if not file_path.exists() or not file_path.is_file():
-            raise FileNotFoundError(f"file not found: {payload.get('path')}")
+            raise FileNotFoundError(f"file not found: {input.get('path')}")
 
         content = file_path.read_text(encoding="utf-8")
         return {"path": str(file_path.relative_to(self._root)), "content": content}
 
-    def _write_file(self, payload: dict[str, Any]) -> dict[str, Any]:
-        file_path = self._resolve_path(str(payload.get("path", "")))
-        content = payload.get("content", "")
+    def _write_file(self, input: Dict[str, Any]) -> Dict[str, Any]:
+        file_path = self._resolve_path(str(input.get("path", "")))
+        content = input.get("content", "")
         if not isinstance(content, str):
-            raise ValueError("payload.content must be a string")
+            raise ValueError("input.content must be a string")
 
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(content, encoding="utf-8")
@@ -85,10 +72,10 @@ class FilesystemIntegration(Integration):
             "bytes_written": len(content.encode("utf-8")),
         }
 
-    def _list_dir(self, payload: dict[str, Any]) -> dict[str, Any]:
-        relative_path = payload.get("path", ".")
+    def _list_dir(self, input: Dict[str, Any]) -> Dict[str, Any]:
+        relative_path = input.get("path", ".")
         if not isinstance(relative_path, str):
-            raise ValueError("payload.path must be a string")
+            raise ValueError("input.path must be a string")
 
         dir_path = self._resolve_path(relative_path)
         if not dir_path.exists() or not dir_path.is_dir():
@@ -108,12 +95,18 @@ class FilesystemIntegration(Integration):
             "entries": entries,
         }
 
-    def _sanitize_payload(self, action: str, payload: dict[str, Any]) -> dict[str, Any]:
-        sanitized: dict[str, Any] = {"path": payload.get("path")}
-        if action == "write_file" and "content" in payload:
-            content = payload.get("content")
-            if isinstance(content, str):
-                sanitized["content_length"] = len(content)
-            else:
-                sanitized["content_type"] = type(content).__name__
-        return sanitized
+    def _append_trace(self, context: Dict[str, Any], input: Dict[str, Any], result: ToolResult) -> None:
+        trace = context.get("trace")
+        if not isinstance(trace, list):
+            context["trace"] = []
+            trace = context["trace"]
+
+        trace.append(
+            {
+                "stage": "tool_execution",
+                "tool": self.name,
+                "input": input,
+                "success": result.success,
+                "error": result.error,
+            }
+        )

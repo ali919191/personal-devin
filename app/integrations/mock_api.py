@@ -1,19 +1,16 @@
-"""Deterministic mock API integration with no real network calls."""
+"""Deterministic mock API tool with no real network calls."""
 
 from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any
+from typing import Any, Dict
 
-from app.core.logger import get_logger
-from app.integrations.base import Integration
-
-logger = get_logger(__name__)
+from app.integrations.tool import Tool, ToolResult
 
 
-class MockAPIIntegration(Integration):
-    """Mock external API integration for deterministic testing."""
+class MockAPITool(Tool):
+    """Mock external API tool for deterministic testing."""
 
     name = "mock_api"
 
@@ -28,40 +25,26 @@ class MockAPIIntegration(Integration):
             },
         }
 
-    def execute(self, action: str, payload: dict[str, Any]) -> dict[str, Any]:
-        payload = self._validate_payload(payload)
-        logger.info(
-            "mock_api_action_started",
-            {
-                "action": action,
-                "payload": self._sanitize_payload(payload),
-            },
-        )
-
+    def execute(self, input: Dict[str, Any], context: Dict[str, Any]) -> ToolResult:
+        result: ToolResult
         try:
-            normalized_action = action.upper()
-            if normalized_action == "GET":
-                result = self._handle_get(payload)
-            elif normalized_action == "POST":
-                result = self._handle_post(payload)
+            action = str(input.get("action", "")).upper()
+            if action == "GET":
+                output = self._handle_get(input)
+                result = ToolResult(success=True, output=output)
+            elif action == "POST":
+                output = self._handle_post(input)
+                result = ToolResult(success=True, output=output)
             else:
-                return self._error(f"unsupported mock_api action: {action}")
-        except Exception as exc:  # pragma: no cover - behavior asserted via output
-            logger.error(
-                "mock_api_action_failed",
-                error=str(exc),
-                data={"action": action},
-            )
-            return self._error(str(exc))
+                result = ToolResult(success=False, error=f"unsupported mock_api action: {input.get('action', '')}")
+        except Exception as e:
+            result = ToolResult(success=False, error=str(e))
 
-        logger.info(
-            "mock_api_action_completed",
-            {"action": normalized_action, "result_keys": sorted(result.keys())},
-        )
-        return self._success(result)
+        self._append_trace(context=context, input=input, result=result)
+        return result
 
-    def _handle_get(self, payload: dict[str, Any]) -> dict[str, Any]:
-        endpoint = self._validate_endpoint(payload.get("endpoint"))
+    def _handle_get(self, input: Dict[str, Any]) -> Dict[str, Any]:
+        endpoint = self._validate_endpoint(input.get("endpoint"))
         if endpoint not in self._static_get_responses:
             raise ValueError(f"unknown mock endpoint: {endpoint}")
 
@@ -71,11 +54,11 @@ class MockAPIIntegration(Integration):
             "response": self._static_get_responses[endpoint],
         }
 
-    def _handle_post(self, payload: dict[str, Any]) -> dict[str, Any]:
-        endpoint = self._validate_endpoint(payload.get("endpoint"))
-        body = payload.get("data", {})
+    def _handle_post(self, input: Dict[str, Any]) -> Dict[str, Any]:
+        endpoint = self._validate_endpoint(input.get("endpoint"))
+        body = input.get("data", {})
         if not isinstance(body, dict):
-            raise ValueError("payload.data must be a dictionary")
+            raise ValueError("input.data must be a dictionary")
 
         canonical_body = json.dumps(body, sort_keys=True, separators=(",", ":"))
         digest = hashlib.sha256(f"{endpoint}:{canonical_body}".encode("utf-8")).hexdigest()
@@ -91,15 +74,21 @@ class MockAPIIntegration(Integration):
 
     def _validate_endpoint(self, endpoint: Any) -> str:
         if not isinstance(endpoint, str) or not endpoint.startswith("/"):
-            raise ValueError("payload.endpoint must be a string starting with '/'")
+            raise ValueError("input.endpoint must be a string starting with '/'")
         return endpoint
 
-    def _sanitize_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
-        sanitized = {"endpoint": payload.get("endpoint")}
-        if "data" in payload:
-            data = payload.get("data")
-            if isinstance(data, dict):
-                sanitized["data_keys"] = sorted(data.keys())
-            else:
-                sanitized["data_type"] = type(data).__name__
-        return sanitized
+    def _append_trace(self, context: Dict[str, Any], input: Dict[str, Any], result: ToolResult) -> None:
+        trace = context.get("trace")
+        if not isinstance(trace, list):
+            context["trace"] = []
+            trace = context["trace"]
+
+        trace.append(
+            {
+                "stage": "tool_execution",
+                "tool": self.name,
+                "input": input,
+                "success": result.success,
+                "error": result.error,
+            }
+        )
