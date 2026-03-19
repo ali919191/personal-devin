@@ -1182,3 +1182,39 @@ pytest -q
 
 - No new third-party dependencies.
 - Reuses project logger and dataclass-based contracts.
+
+## Agent 13 — Conflict Resolution Engine
+
+### What was built
+
+- Deterministic conflict resolution layer between planning and execution.
+- New policy model and defaults in `app/planning/policy.py`.
+- New resolver in `app/planning/conflict_resolver.py`:
+  - `ConflictResolver.resolve(adaptations) -> list[Adaptation]`
+- Extended planning models with `Adaptation` contract fields:
+  - `id`, `target`, `action`, `confidence`, `policy`, `priority`, `created_at`
+- Full planning-scoped tests in `tests/planning/test_conflict_resolver.py`.
+
+### Architecture decisions
+
+- Strict resolution ordering:
+  1. Policy precedence
+  2. Confidence filtering
+  3. Confidence tie-break
+  4. Deterministic fallback ordering
+- Policy-first gate:
+  - Adaptations with unknown policy are dropped.
+  - Policy confidence thresholds are enforced before selection.
+- Deterministic fallback ordering key:
+  - `(-policy_priority, -confidence, created_at, id)`
+- Structured observability:
+  - Each resolve call logs a `conflict_resolution` event with counts, selected IDs, dropped IDs, and reasoning.
+
+### How to run
+
+- `pytest tests/planning/test_conflict_resolver.py`
+- `pytest -q`
+
+### Dependencies
+
+- None (pure internal logic)

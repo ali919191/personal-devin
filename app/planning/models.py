@@ -1,5 +1,6 @@
 """Data models for the planning system."""
 
+from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID, uuid4
 
@@ -137,3 +138,20 @@ class ExecutionPlan(BaseModel):
         description="Tasks grouped by parallelisable execution level",
     )
     metadata: PlanMetadata = Field(..., description="Plan metadata")
+
+
+# ---------------------------------------------------------------------------
+# Agent 13 — Conflict Resolution Engine models
+# ---------------------------------------------------------------------------
+
+
+class Adaptation(BaseModel):
+    """Adaptation candidate evaluated before execution starts."""
+
+    id: str = Field(..., min_length=1)
+    target: str = Field(..., min_length=1)
+    action: str = Field(..., min_length=1)
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    policy: str = Field(..., min_length=1)
+    priority: int = Field(..., ge=0)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
