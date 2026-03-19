@@ -164,57 +164,76 @@ class Runner:
             deployment_context,
             infrastructure_context,
         )
-        self._deploy_infrastructure(resolved_deployment_context)
-        handlers = handlers or {}
-        started_at = datetime.now(UTC)
-        _logger.log_run_started(plan.metadata.total_tasks)
+        _logger.log_run_started(
+            plan.metadata.total_tasks,
+            execution_id=resolved_deployment_context.execution_id,
+            fingerprint=resolved_deployment_context.fingerprint,
+        )
 
-        execution_tasks: list[ExecutionTask] = [
-            _task_node_to_execution_task(node) for node in plan.ordered_tasks
-        ]
-        task_index: dict[str, ExecutionTask] = {t.id: t for t in execution_tasks}
+        try:
+            self._deploy_infrastructure(resolved_deployment_context)
+            handlers = handlers or {}
+            started_at = datetime.now(UTC)
 
-        halted = False
+            execution_tasks: list[ExecutionTask] = [
+                _task_node_to_execution_task(node) for node in plan.ordered_tasks
+            ]
+            task_index: dict[str, ExecutionTask] = {t.id: t for t in execution_tasks}
 
-        for task in execution_tasks:
-            if halted:
-                task.status = ExecutionStatus.SKIPPED
+            halted = False
+
+            for task in execution_tasks:
+                if halted:
+                    task.status = ExecutionStatus.SKIPPED
+                    blocking_dep = self._find_blocking_dependency(task, task_index)
+                    if blocking_dep is not None:
+                        task.skip_reason = f"dependency_failed:{blocking_dep}"
+                    else:
+                        task.skip_reason = "run_halted_after_failure"
+                    task.error = task.skip_reason
+                    _logger.log_step_skipped(task, task.skip_reason)
+                    continue
+
+                # Skip if any dependency failed or was itself skipped.
                 blocking_dep = self._find_blocking_dependency(task, task_index)
                 if blocking_dep is not None:
+                    task.status = ExecutionStatus.SKIPPED
                     task.skip_reason = f"dependency_failed:{blocking_dep}"
+                    task.error = task.skip_reason
+                    _logger.log_step_skipped(
+                        task,
+                        task.skip_reason,
+                    )
+                    if self.stop_on_failure:
+                        halted = True
+                    continue
+
+                _logger.log_step_started(task)
+                self._executor.execute_task(task, handler=handlers.get(task.id))
+
+                if task.status == ExecutionStatus.COMPLETED:
+                    _logger.log_step_completed(task)
                 else:
-                    task.skip_reason = "run_halted_after_failure"
-                task.error = task.skip_reason
-                _logger.log_step_skipped(task, task.skip_reason)
-                continue
+                    _logger.log_step_failed(task)
+                    if self.stop_on_failure:
+                        halted = True
 
-            # Skip if any dependency failed or was itself skipped.
-            blocking_dep = self._find_blocking_dependency(task, task_index)
-            if blocking_dep is not None:
-                task.status = ExecutionStatus.SKIPPED
-                task.skip_reason = f"dependency_failed:{blocking_dep}"
-                task.error = task.skip_reason
-                _logger.log_step_skipped(
-                    task,
-                    task.skip_reason,
+            report = self._build_report(execution_tasks, started_at)
+            if report.status == ExecutionStatus.FAILED:
+                _logger.log_run_failed(
+                    execution_id=resolved_deployment_context.execution_id,
+                    fingerprint=resolved_deployment_context.fingerprint,
+                    error="execution_report_failed",
                 )
-                if self.stop_on_failure:
-                    halted = True
-                continue
-
-            _logger.log_step_started(task)
-            self._executor.execute_task(task, handler=handlers.get(task.id))
-
-            if task.status == ExecutionStatus.COMPLETED:
-                _logger.log_step_completed(task)
-            else:
-                _logger.log_step_failed(task)
-                if self.stop_on_failure:
-                    halted = True
-
-        report = self._build_report(execution_tasks, started_at)
-        _logger.log_run_summary(report)
-        return report
+            _logger.log_run_summary(report)
+            return report
+        except Exception as exc:  # noqa: BLE001
+            _logger.log_run_failed(
+                execution_id=resolved_deployment_context.execution_id,
+                fingerprint=resolved_deployment_context.fingerprint,
+                error=str(exc),
+            )
+            raise
 
     def _find_blocking_dependency(
         self,

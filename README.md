@@ -187,6 +187,10 @@ Defined in `requirements.txt`:
 ### How to run
 - Context is built before execution
 - Passed explicitly into ExecutionRunner
+- Context can be serialized to stable JSON and replayed exactly
+- Context fingerprint is the deterministic debugging and replay anchor
+- Serialization uses canonical JSON with sorted keys and compact separators for byte-stable hashing
+- Execution start and failure logs include the context fingerprint for replay correlation
 
 ### Dependencies
 - environment_resolver

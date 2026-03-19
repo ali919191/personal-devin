@@ -1,8 +1,11 @@
 """Tests for Agent 03 — Execution Engine."""
 
+from types import SimpleNamespace
+
 import pytest
 
 from app.deployment.context_injector import build_deployment_context
+from app.deployment.deployment_context import context_fingerprint
 from app.execution.executor import Executor
 from app.execution.models import ExecutionReport, ExecutionStatus, ExecutionTask
 from app.execution.runner import Runner, run_plan
@@ -506,3 +509,148 @@ class TestDeploymentContextInjection:
         )
 
         assert report.status == ExecutionStatus.COMPLETED
+
+    def test_context_fingerprint_is_stable_debug_anchor(self) -> None:
+        context = make_deployment_context(environment="mock", provider_type="mock")
+
+        assert context.execution_id == "exec-runner-tests"
+        assert context.fingerprint == context.metadata["context_fingerprint"]
+        assert context_fingerprint(context) == context.fingerprint
+
+    def test_execution_logs_include_fingerprint_on_start_and_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        log_events: list[tuple[str, dict[str, str]]] = []
+
+        class FakeLogger:
+            def log_run_started(self, total_tasks: int, *, execution_id: str, fingerprint: str) -> None:
+                log_events.append(
+                    (
+                        "execution_started",
+                        {
+                            "execution_id": execution_id,
+                            "fingerprint": fingerprint,
+                            "total_tasks": str(total_tasks),
+                        },
+                    )
+                )
+
+            def log_step_started(self, task: ExecutionTask) -> None:
+                return None
+
+            def log_step_completed(self, task: ExecutionTask) -> None:
+                return None
+
+            def log_step_failed(self, task: ExecutionTask) -> None:
+                return None
+
+            def log_step_skipped(self, task: ExecutionTask, reason: str) -> None:
+                return None
+
+            def log_run_summary(self, report: ExecutionReport) -> None:
+                return None
+
+            def log_run_failed(self, *, execution_id: str, fingerprint: str, error: str) -> None:
+                log_events.append(
+                    (
+                        "execution_failed",
+                        {
+                            "execution_id": execution_id,
+                            "fingerprint": fingerprint,
+                            "error": error,
+                        },
+                    )
+                )
+
+        monkeypatch.setattr("app.execution.runner._logger", FakeLogger())
+
+        context = make_deployment_context(environment="mock", provider_type="mock")
+        plan = make_plan(make_node("t1"))
+
+        report = run_plan(
+            plan,
+            handlers={"t1": always_fail},
+            deployment_context=context,
+        )
+
+        assert report.status == ExecutionStatus.FAILED
+        assert log_events[0] == (
+            "execution_started",
+            {
+                "execution_id": context.execution_id,
+                "fingerprint": context.fingerprint,
+                "total_tasks": "1",
+            },
+        )
+        assert log_events[-1] == (
+            "execution_failed",
+            {
+                "execution_id": context.execution_id,
+                "fingerprint": context.fingerprint,
+                "error": "execution_report_failed",
+            },
+        )
+
+
+class TestExecutionLogger:
+    def test_log_run_started_emits_execution_started_with_fingerprint(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        events: list[tuple[str, str, dict[str, str] | None]] = []
+
+        class FakeStructuredLogger:
+            def info(self, action: str, data: dict[str, str] | None = None) -> None:
+                events.append(("info", action, data))
+
+            def error(self, action: str, error: str, data: dict[str, str] | None = None) -> None:
+                events.append(("error", action, {"error": error, **(data or {})}))
+
+        monkeypatch.setattr(
+            "app.execution.logger.get_logger",
+            lambda name: FakeStructuredLogger(),
+        )
+
+        from app.execution.logger import ExecutionLogger
+
+        logger = ExecutionLogger("test.execution")
+        logger.log_run_started(2, execution_id="exec-1", fingerprint="fp-1")
+
+        assert events == [
+            (
+                "info",
+                "execution_started",
+                {
+                    "execution_id": "exec-1",
+                    "fingerprint": "fp-1",
+                    "total_tasks": 2,
+                },
+            )
+        ]
+
+    def test_log_run_failed_emits_execution_failed_with_fingerprint(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        events: list[tuple[str, str, dict[str, str] | None]] = []
+
+        class FakeStructuredLogger:
+            def info(self, action: str, data: dict[str, str] | None = None) -> None:
+                events.append(("info", action, data))
+
+            def error(self, action: str, error: str, data: dict[str, str] | None = None) -> None:
+                events.append(("error", action, {"error": error, **(data or {})}))
+
+        monkeypatch.setattr(
+            "app.execution.logger.get_logger",
+            lambda name: FakeStructuredLogger(),
+        )
+
+        from app.execution.logger import ExecutionLogger
+
+        logger = ExecutionLogger("test.execution")
+        logger.log_run_failed(execution_id="exec-1", fingerprint="fp-1", error="boom")
+
+        assert events == [
+            (
+                "error",
+                "execution_failed",
+                {
+                    "error": "boom",
+                    "execution_id": "exec-1",
+                    "fingerprint": "fp-1",
+                },
+            )
+        ]

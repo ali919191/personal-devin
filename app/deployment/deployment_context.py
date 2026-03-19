@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
+import json
+from hashlib import sha256
 from typing import Any
 
 
@@ -59,6 +61,27 @@ class FrozenDict(Mapping[str, Any]):
 
     def to_dict(self) -> dict[str, Any]:
         return {key: _thaw_value(value) for key, value in self._data.items()}
+
+
+def _fingerprint_payload_from_sections(
+    environment: Mapping[str, Any],
+    variables: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+) -> dict[str, Any]:
+    sanitized_metadata = {
+        str(key): _thaw_value(value)
+        for key, value in metadata.items()
+        if key not in {"execution_id", "context_fingerprint"}
+    }
+    return {
+        "environment": FrozenDict(environment).to_dict(),
+        "variables": FrozenDict(variables).to_dict(),
+        "metadata": sanitized_metadata,
+    }
+
+
+def _fingerprint_payload_to_json(payload: Mapping[str, Any]) -> str:
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
 @dataclass(frozen=True)
@@ -117,6 +140,13 @@ class DeploymentContext:
         return str(self.metadata["execution_id"])
 
     @property
+    def fingerprint(self) -> str:
+        fingerprint = self.metadata.get("context_fingerprint")
+        if isinstance(fingerprint, str) and fingerprint:
+            return fingerprint
+        return context_fingerprint(self)
+
+    @property
     def services(self) -> tuple[str, ...]:
         services = self.variables.get("services", ())
         if isinstance(services, tuple):
@@ -129,3 +159,34 @@ class DeploymentContext:
             "variables": self.variables.to_dict(),
             "metadata": self.metadata.to_dict(),
         }
+
+    def to_json(self) -> str:
+        return _fingerprint_payload_to_json(self.to_dict())
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "DeploymentContext":
+        if not isinstance(payload, Mapping):
+            raise TypeError("payload must be a mapping")
+        return cls(
+            environment=payload.get("environment", {}),
+            variables=payload.get("variables", {}),
+            metadata=payload.get("metadata", {}),
+        )
+
+    @classmethod
+    def from_json(cls, payload: str) -> "DeploymentContext":
+        if not isinstance(payload, str):
+            raise TypeError("payload must be a string")
+        return cls.from_dict(json.loads(payload))
+
+
+def context_fingerprint(context: DeploymentContext) -> str:
+    """Return a deterministic hash for debugging and replay tracking."""
+    if not isinstance(context, DeploymentContext):
+        raise TypeError("context must be a DeploymentContext instance")
+    payload = _fingerprint_payload_from_sections(
+        context.environment,
+        context.variables,
+        context.metadata,
+    )
+    return sha256(_fingerprint_payload_to_json(payload).encode("utf-8")).hexdigest()

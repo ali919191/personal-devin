@@ -7,7 +7,7 @@ from collections.abc import Mapping
 import pytest
 
 from app.deployment.context_injector import build_deployment_context
-from app.deployment.deployment_context import DeploymentContext
+from app.deployment.deployment_context import DeploymentContext, context_fingerprint
 from app.execution.models import ExecutionStatus, ExecutionTask
 from app.execution.runner import run_plan
 from app.planning.models import ExecutionGroup, ExecutionPlan, PlanMetadata, TaskNode
@@ -64,6 +64,8 @@ def test_context_is_deterministic_for_same_input() -> None:
 
     assert first == second
     assert hash(first) == hash(second)
+    assert first.fingerprint == second.fingerprint
+    assert context_fingerprint(first) == context_fingerprint(second)
 
 
 def test_injector_copies_inputs_before_freezing() -> None:
@@ -120,3 +122,56 @@ def test_injection_integrity_preserves_context_values() -> None:
     assert context.credentials_ref == "iam://staging-role"
     assert context.services == ("api", "worker")
     assert context.execution_id == "exec-028"
+    assert context.fingerprint == context.metadata["context_fingerprint"]
+
+
+def test_context_serialization_round_trips_for_replay() -> None:
+    original = build_deployment_context(*make_context_inputs())
+
+    replayed = DeploymentContext.from_json(original.to_json())
+
+    assert replayed == original
+    assert replayed.fingerprint == original.fingerprint
+
+
+def test_context_json_is_canonical_and_whitespace_free() -> None:
+    context = build_deployment_context(*make_context_inputs())
+    payload = context.to_json()
+
+    assert ": " not in payload
+    assert ", " not in payload
+    assert payload == context.to_json()
+
+
+def test_fingerprint_becomes_execution_id_when_missing() -> None:
+    context = build_deployment_context(
+        {
+            "name": "staging",
+            "region": "us-east-1",
+            "provider_type": "mock",
+            "credentials_ref": "iam://staging-role",
+        },
+        {
+            "variables": {"services": ["api"]},
+            "metadata": {"trigger": "test"},
+        },
+    )
+
+    assert context.execution_id == context.fingerprint
+
+
+def test_fingerprint_ignores_execution_id_for_replay_equivalence() -> None:
+    resolved_env, config = make_context_inputs()
+    first = build_deployment_context(resolved_env, config)
+    second = build_deployment_context(
+        resolved_env,
+        {
+            "variables": config["variables"],
+            "metadata": {
+                **config["metadata"],
+                "execution_id": "different-run-id",
+            },
+        },
+    )
+
+    assert first.fingerprint == second.fingerprint
