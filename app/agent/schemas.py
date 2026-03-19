@@ -33,3 +33,4 @@ class AgentResult(BaseModel):
     evaluation: EvaluationResult | None = Field(default=None)
     feedback: FeedbackSignal | None = Field(default=None)
     adaptation: list[RuntimeAdaptation] = Field(default_factory=list)
+    applied_modifiers: dict[str, object] = Field(default_factory=dict)

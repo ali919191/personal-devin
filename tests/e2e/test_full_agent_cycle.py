@@ -543,11 +543,32 @@ class TestLoggingVerification:
 
 
 # ---------------------------------------------------------------------------
-# 7. Replay Test — serialized output is equal across identical runs
+# 7. Closed-Loop Manual Injection Test — prove wiring works without automatic learning
+# ---------------------------------------------------------------------------
+
+class TestClosedLoopManualInjection:
+    """Test 7: Manual adaptation injection changes the next run result."""
+
+    def test_manual_injected_adaptation_changes_next_run_result(self) -> None:
+        plan = _make_plan("task-1")
+        report = _make_report([_make_execution_task("task-1", ExecutionStatus.FAILED)])
+        loop = _make_loop(plan, report)
+
+        result1 = loop.run("manual closed loop task")
+        adaptation = result1.adaptation
+        result2 = loop.run("manual closed loop task", injected_adaptation=adaptation)
+
+        assert adaptation != []
+        assert result2.applied_modifiers != {}
+        assert result2 != result1
+
+
+# ---------------------------------------------------------------------------
+# 8. Replay Test — serialized output is equal across identical runs
 # ---------------------------------------------------------------------------
 
 class TestReplayTest:
-    """Test 7: Serialized output of identical runs must match."""
+    """Test 8: Serialized output of identical runs must match."""
 
     def _serialize_result(self, result: AgentResult) -> str:
         """Produce a deterministic JSON-like representation of the result."""
@@ -563,6 +584,7 @@ class TestReplayTest:
                 "feedback_suggestions": list(result.feedback.improvement_suggestions) if result.feedback else [],
                 "adaptation_count": len(result.adaptation),
                 "adaptation_types": sorted(a.type for a in result.adaptation),
+                "applied_modifiers": dict(result.applied_modifiers),
                 "reflection_notes": result.reflection.notes,
                 "reflection_success_rate": result.reflection.success_rate,
             },
@@ -607,11 +629,11 @@ class TestReplayTest:
 
 
 # ---------------------------------------------------------------------------
-# 8. Stress Test — 50 iterations of loop stability
+# 9. Stress Test — 50 iterations of loop stability
 # ---------------------------------------------------------------------------
 
 class TestStressTest:
-    """Test 8: System remains stable and consistent over 50 consecutive iterations."""
+    """Test 9: System remains stable and consistent over 50 consecutive iterations."""
 
     def test_fifty_successful_iterations_produce_consistent_status(self) -> None:
         plan = _make_plan("task-1")

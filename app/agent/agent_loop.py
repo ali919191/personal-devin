@@ -21,7 +21,6 @@ from app.execution.models import ExecutionReport, ExecutionStatus, ExecutionTask
 from app.execution.runner import run_plan
 from app.feedback import FeedbackEngine, FeedbackSignal
 from app.memory.service import MemoryService
-from app.planning.models import Adaptation
 from app.planning import build_execution_plan, plan as plan_task
 from app.planning.conflict_resolver import ConflictResolver
 from app.self_improvement.engine import SelfImprovementEngine
@@ -96,7 +95,11 @@ class AgentLoop:
         digest = sha256(normalized.encode("utf-8")).hexdigest()
         return f"iter-{digest[:16]}"
 
-    def run(self, goal: str) -> AgentResult:
+    def run(
+        self,
+        goal: str,
+        injected_adaptation: list[RuntimeAdaptation] | None = None,
+    ) -> AgentResult:
         """Run the deterministic agent loop for a single goal string."""
         normalized_goal = goal.strip()
         if not normalized_goal:
@@ -104,6 +107,7 @@ class AgentLoop:
 
         self._state_history = []
         self._last_iteration_id = self.deterministic_iteration_id(normalized_goal)
+        applied_modifiers = self._apply_injected_adaptations(injected_adaptation or [])
 
         plan_context = self._run_step_with_retry(
             iteration_id=self._last_iteration_id,
@@ -131,6 +135,7 @@ class AgentLoop:
                 feedback_signal=feedback_signal,
                 status=status,
                 resolved_adaptation_count=plan_context.resolved_adaptation_count,
+                applied_modifiers=applied_modifiers,
             ),
         )
 
@@ -143,6 +148,7 @@ class AgentLoop:
             evaluation=evaluation_result,
             feedback=feedback_signal,
             adaptation=runtime_adaptations,
+            applied_modifiers=applied_modifiers,
         )
 
     def _run_step_with_retry(
@@ -300,6 +306,30 @@ class AgentLoop:
 
         return runtime_adaptations
 
+    def _apply_injected_adaptations(
+        self,
+        injected_adaptations: list[RuntimeAdaptation],
+    ) -> dict[str, Any]:
+        if not injected_adaptations:
+            return {}
+
+        valid_adaptations = self._adaptation_engine.filter_valid(list(injected_adaptations))
+        applied_modifiers = self._adaptation_engine.apply(
+            valid_adaptations,
+            execution_context={"iteration_id": self._last_iteration_id},
+        )
+        self._memory.log_decision(
+            decision="injected_adaptation_applied",
+            reason="manual_closed_loop_test",
+            context={
+                "execution_id": self._last_iteration_id,
+                "injected_count": len(injected_adaptations),
+                "valid_count": len(valid_adaptations),
+                "applied_modifiers": dict(applied_modifiers),
+            },
+        )
+        return applied_modifiers
+
     def _serialize_runtime_adaptations(
         self,
         adaptations: list[RuntimeAdaptation],
@@ -325,6 +355,7 @@ class AgentLoop:
         feedback_signal: FeedbackSignal,
         status: str,
         resolved_adaptation_count: int,
+        applied_modifiers: dict[str, Any],
     ) -> ReflectionResult:
         reflection = self._reflect(metrics)
         self._persist(
@@ -336,6 +367,7 @@ class AgentLoop:
             reflection,
             status,
             resolved_adaptation_count=resolved_adaptation_count,
+            applied_modifiers=applied_modifiers,
         )
         self._run_self_improvement(goal, metrics, reflection, status)
         return reflection
@@ -414,6 +446,7 @@ class AgentLoop:
         reflection: ReflectionResult,
         status: str,
         resolved_adaptation_count: int,
+        applied_modifiers: dict[str, Any],
     ) -> None:
         tasks: list[ExecutionTask] = list(metrics["tasks"])
         task_errors = [
@@ -442,6 +475,7 @@ class AgentLoop:
             metadata={
                 "source": "agent_loop",
                 "resolved_adaptations": resolved_adaptation_count,
+                "applied_modifiers": dict(applied_modifiers),
                 "feedback": {
                     "execution_id": feedback_signal.execution_id,
                     "score": feedback_signal.score,
@@ -474,6 +508,7 @@ class AgentLoop:
                     "total_tasks": len(plan.ordered_tasks),
                 },
                 "resolved_adaptations": resolved_adaptation_count,
+                "applied_modifiers": dict(applied_modifiers),
                 "reflection": reflection.model_dump(),
             },
         )
@@ -505,6 +540,7 @@ class AgentLoop:
                 "goal": goal,
                 "failed_tasks": reflection.failed_tasks,
                 "success_rate": reflection.success_rate,
+                "applied_modifiers": dict(applied_modifiers),
             },
         )
 
