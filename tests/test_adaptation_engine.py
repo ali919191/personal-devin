@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from app.adaptation import (
     Adaptation,
     AdaptationEngine,
@@ -9,6 +11,7 @@ from app.adaptation import (
     RetryLimitPolicy,
     TimeoutPolicy,
 )
+from app.feedback.models import FeedbackSignal
 
 
 def test_adaptation_generation() -> None:
@@ -162,3 +165,46 @@ def test_custom_policy_registration() -> None:
     policy = registry.get("step_order_hint")
     assert policy.validate(adaptation) is True
     assert policy.apply(adaptation, context={}) == {"step_order_hint": "dependency_first"}
+
+
+def test_process_feedback_generates_direct_adaptations() -> None:
+    engine = AdaptationEngine()
+    signal = FeedbackSignal(
+        execution_id="iter-123",
+        score=0.0,
+        success=False,
+        failure_type="execution_failure",
+        improvement_suggestions=[
+            "add_task_level_retry_with_backoff",
+            "introduce_precondition_validation",
+        ],
+        confidence=0.75,
+        timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+    )
+
+    adaptations = engine.process_feedback(signal)
+
+    assert [item.type for item in adaptations] == ["retry_limit", "preferred_tool"]
+    assert [item.source for item in adaptations] == ["feedback:iter-123", "feedback:iter-123"]
+
+
+def test_process_feedback_is_deterministic() -> None:
+    engine = AdaptationEngine()
+    signal = FeedbackSignal(
+        execution_id="iter-789",
+        score=0.5,
+        success=False,
+        failure_type="partial_match",
+        improvement_suggestions=[
+            "add_post_execution_output_sanitization",
+            "add_post_execution_output_sanitization",
+        ],
+        confidence=0.9,
+        timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+    )
+
+    first = engine.process_feedback(signal)
+    second = engine.process_feedback(signal)
+
+    assert first == second
+    assert [item.type for item in first] == ["timeout_seconds"]
