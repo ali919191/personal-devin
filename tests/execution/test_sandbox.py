@@ -6,9 +6,7 @@ import builtins
 from pathlib import Path
 
 from app.execution.models import ExecutionTask
-from app.execution.sandbox import ExecutionSandbox
-
-LEAK_COUNTER = 0
+from app.execution.sandbox import _BUILTINS_LOCK, ExecutionSandbox
 
 
 def make_task(task_id: str = "task-1") -> ExecutionTask:
@@ -23,11 +21,10 @@ def test_allowed_execution_returns_success() -> None:
 
     result = sandbox.execute(handler, make_task(), context={"trace_id": "t-1"})
 
-    assert result == {
-        "success": True,
-        "output": {"result": (True, "handled:task-1")},
-        "error": None,
-    }
+    assert result["success"] is True
+    assert result["output"]["result"] == (True, "handled:task-1")
+    assert result["output"]["context"] == {"trace_id": "t-1"}
+    assert result["error"] is None
 
 
 def test_open_is_blocked() -> None:
@@ -40,6 +37,7 @@ def test_open_is_blocked() -> None:
     result = sandbox.execute(handler, make_task(), context={})
 
     assert result["success"] is False
+    assert result["output"]["context"] == {}
     assert "open" in str(result["error"])
 
 
@@ -54,6 +52,7 @@ def test_os_import_is_blocked() -> None:
     result = sandbox.execute(handler, make_task(), context={})
 
     assert result["success"] is False
+    assert result["output"]["context"] == {}
     assert result["error"] == "Module 'os' is not allowed"
 
 
@@ -67,28 +66,23 @@ def test_math_import_is_allowed() -> None:
 
     result = sandbox.execute(handler, make_task(), context={})
 
-    assert result == {
-        "success": True,
-        "output": {"result": (True, 2.0)},
-        "error": None,
-    }
+    assert result["success"] is True
+    assert result["output"]["result"] == (True, 2.0)
+    assert result["output"]["context"] == {}
+    assert result["error"] is None
 
 
-def test_global_assignments_do_not_leak_between_runs() -> None:
+def test_handler_globals_are_not_rewritten() -> None:
     sandbox = ExecutionSandbox()
+    original_globals = globals()
 
     def handler(task: ExecutionTask) -> tuple[bool, str | None]:
-        global LEAK_COUNTER
+        return (True, task.id)
 
-        LEAK_COUNTER = LEAK_COUNTER + 1
-        return (True, str(LEAK_COUNTER))
+    result = sandbox.execute(handler, make_task("globals"), context={})
 
-    first = sandbox.execute(handler, make_task("first"), context={})
-    second = sandbox.execute(handler, make_task("second"), context={})
-
-    assert first["output"]["result"] == (True, "1")
-    assert second["output"]["result"] == (True, "1")
-    assert LEAK_COUNTER == 0
+    assert result["success"] is True
+    assert handler.__globals__ is original_globals
 
 
 def test_builtins_are_restored_after_execution(tmp_path: Path) -> None:
@@ -132,6 +126,15 @@ def test_context_is_copied_before_execution() -> None:
     def handler(task: ExecutionTask) -> tuple[bool, str | None]:
         return (True, task.id)
 
-    sandbox.execute(handler, make_task(), context=original_context)
+    result = sandbox.execute(handler, make_task(), context=original_context)
 
     assert original_context == {"trace": {"id": "run-1"}}
+    assert result["output"]["context"] == {"trace": {"id": "run-1"}}
+    assert result["output"]["context"] is not original_context
+    assert result["output"]["context"]["trace"] is not original_context["trace"]
+
+
+def test_builtins_lock_is_reentrant() -> None:
+    with _BUILTINS_LOCK:
+        with _BUILTINS_LOCK:
+            assert True

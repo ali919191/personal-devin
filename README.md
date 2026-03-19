@@ -445,8 +445,9 @@ Completed:  4/4
 
 ### Architecture decisions
 - Callable-based sandbox (no exec/eval)
-- In-process isolation via builtins patching
+- In-process isolation via builtins patching guarded by a re-entrant lock
 - Deterministic and stateless execution model
+- No handler global rewriting; sandboxing stays at the execution boundary only
 
 ### How to run
 pytest tests/execution/test_sandbox.py
