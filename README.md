@@ -16,6 +16,34 @@ Agent 01 in this repository is the Task Decomposition Engine, responsible for:
 - No hidden logic: planning behavior is inspectable in rule definitions and graph code.
 - Production validation: cycle checks, input validation, and test-enforced behavior.
 - Modular architecture: decomposition logic is rule-based and extensible for future LLM augmentation.
+- Explicit orchestration control: full-system runs are governed by a validated state machine and deterministic recovery policy.
+
+## System Architecture
+
+Personal Devin is layered as a deterministic control stack:
+
+- Planning produces a validated execution plan from task dictionaries.
+- Execution runs the ordered plan and returns a typed execution report.
+- Memory persists execution, task, failure, and decision records.
+- Self-improvement analyzes memory history and emits approved adaptations.
+- Orchestration & Control coordinates the full lifecycle through explicit states, recovery rules, and trace logging.
+
+Current control-layer files:
+- `app/core/logger.py`
+- `app/core/state.py`
+- `app/core/recovery.py`
+- `app/core/orchestrator.py`
+
+## System Execution Flow
+
+System execution now follows a strict orchestrated pipeline:
+1. Initialize run context and trace ID.
+2. Transition to `PLANNING` and build the execution plan.
+3. Transition to `EXECUTING` and run the plan through the execution engine.
+4. Transition to `VALIDATING` and verify execution report consistency.
+5. Transition to `REFLECTING` and persist deterministic memory records.
+6. Transition to `IMPROVING` and run the self-improvement loop from memory.
+7. Transition to `COMPLETED` or `FAILED` through the state machine.
 
 ## Agent 01 Execution Model
 
@@ -36,13 +64,17 @@ Public entrypoint for Agent 01 decomposition internals:
 personal-devin/
 ├── app/
 │   ├── core/
-│   │   └── logger.py
+│   │   ├── logger.py
+│   │   ├── orchestrator.py
+│   │   ├── recovery.py
+│   │   └── state.py
 │   └── planning/
 │       ├── models.py
 │       ├── planner.py
 │       ├── task_decomposer.py
 │       └── task_graph.py
 ├── tests/
+│   ├── core/
 │   ├── test_basic.py
 │   └── test_task_decomposer.py
 ├── README.md
@@ -1326,3 +1358,58 @@ pytest -q
 ### Dependencies
 
 - None (pure internal logic using Python standard library only: `dataclasses`, `enum`, `datetime`, `collections`, `uuid`).
+
+## Agent 16 — Orchestration & Control Layer
+
+### What was built
+
+- Deterministic `OrchestrationController` in `app/core/orchestrator.py` as the new full-system entry point.
+- Explicit state machine in `app/core/state.py` with validated transitions across `INITIALIZED`, `PLANNING`, `EXECUTING`, `VALIDATING`, `REFLECTING`, `IMPROVING`, `COMPLETED`, and `FAILED`.
+- Deterministic failure recovery manager in `app/core/recovery.py` with explicit failure categories and bounded retry policy.
+- Phase-level trace logging with one trace ID per run and duration metrics for each orchestration stage.
+- End-to-end tests covering state transitions, retry behavior, validation failures, and full orchestration flow under `tests/core/`.
+
+### Architecture decisions
+
+- Public-interface-only orchestration:
+  - planning via `app.planning.build_execution_plan`
+  - execution via `app.execution.run_plan`
+  - memory via `app.memory.MemoryService`
+  - self-improvement via `app.self_improvement.run_self_improvement_loop`
+- Canonical orchestrator ownership moved to `app/core/orchestrator.py` and exposed as `app.core.Orchestrator`.
+- `app/orchestration/orchestrator.py` is retained only as a deprecated compatibility layer.
+- State transitions are explicit and validated rather than inferred from stage names or partial side effects.
+- Recovery is phase-scoped and deterministic:
+  - transient failures may retry within `RetryPolicy`
+  - deterministic failures do not retry
+  - policy violations do not retry
+- Validation is separated from execution so report integrity failures are surfaced before reflection and improvement proceed.
+- Reflection persists execution/task/failure memory and records a deterministic reflection snapshot before self-improvement runs.
+
+### New constraints introduced
+
+- No phase may skip the state machine.
+- No retries for deterministic failures or policy violations.
+- No direct internal access to planning, execution, memory, or self-improvement internals from the controller.
+- Terminal states are final; no transitions are allowed out of `COMPLETED` or `FAILED`.
+- Reproducibility depends on explicit inputs, ordered transitions, and bounded retry policy only.
+
+### How to run
+
+Run Agent 16 tests:
+
+```bash
+pytest tests/core/ -q
+```
+
+Run full validation:
+
+```bash
+pytest -q
+flake8 .
+```
+
+### Dependencies
+
+- `flake8` (added for deterministic linting and required pre-push validation).
+- No runtime dependencies beyond the repository's existing Python stack.
