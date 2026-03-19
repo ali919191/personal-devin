@@ -2,6 +2,7 @@
 
 from app.self_improvement.engine import SelfImprovementEngine
 from app.self_improvement.evaluator import Evaluator
+from app.self_improvement.handlers import IMPROVEMENT_HANDLERS
 from app.self_improvement.models import EvaluationResult, ImprovementAction, ImprovementType
 from app.self_improvement.optimizer import Optimizer
 from app.self_improvement.policy import ImprovementPolicy
@@ -189,3 +190,21 @@ def test_engine_persists_improvements() -> None:
     approved = engine.run(store)
 
     assert store.persisted == approved
+
+
+def test_improvement_handlers_covers_all_enum_members() -> None:
+    for member in ImprovementType:
+        assert member in IMPROVEMENT_HANDLERS, f"No handler registered for {member}"
+
+
+def test_improvement_handler_stubs_return_contract_shape() -> None:
+    for improvement_type, handler in IMPROVEMENT_HANDLERS.items():
+        action = ImprovementAction(type=improvement_type, target="test_target", value="test_value", confidence=0.8)
+        result = handler(action)
+        assert isinstance(result, dict)
+        assert "handler" in result
+        assert "target" in result
+        assert "value" in result
+        assert "applied" in result
+        assert result["target"] == "test_target"
+        assert result["value"] == "test_value"
