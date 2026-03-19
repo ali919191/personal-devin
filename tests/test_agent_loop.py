@@ -57,6 +57,24 @@ def make_report(tasks: list[ExecutionTask]) -> ExecutionReport:
 class TestAgentLoop:
     @patch("app.agent.agent_loop.run_plan")
     @patch("app.agent.agent_loop.build_execution_plan")
+    def test_conflict_resolver_called_pre_execution(
+        self, build_execution_plan_mock, run_plan_mock
+    ) -> None:
+        plan = make_plan(TaskNode(id="task-1", description="goal", dependencies=[]))
+        report = make_report([make_task("task-1", ExecutionStatus.COMPLETED)])
+        build_execution_plan_mock.return_value = plan
+        run_plan_mock.return_value = report
+
+        resolver = MagicMock()
+        resolver.resolve.return_value = []
+
+        AgentLoop(memory_service=MagicMock(), conflict_resolver=resolver).run("Goal")
+
+        resolver.resolve.assert_called_once_with([])
+        run_plan_mock.assert_called_once_with(plan)
+
+    @patch("app.agent.agent_loop.run_plan")
+    @patch("app.agent.agent_loop.build_execution_plan")
     def test_full_success(self, build_execution_plan_mock, run_plan_mock) -> None:
         plan = make_plan(TaskNode(id="task-1", description="goal", dependencies=[]))
         report = make_report([make_task("task-1", ExecutionStatus.COMPLETED)])

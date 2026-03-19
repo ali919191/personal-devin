@@ -8,6 +8,8 @@ from app.core.logger import get_logger
 from app.execution.models import ExecutionReport, ExecutionStatus, ExecutionTask
 from app.execution.runner import run_plan
 from app.memory.service import MemoryService
+from app.planning.conflict_resolver import ConflictResolver
+from app.planning.models import Adaptation
 from app.planning import build_execution_plan
 
 logger = get_logger(__name__)
@@ -24,8 +26,10 @@ class AgentLoop:
         self,
         memory_service: MemoryService | None = None,
         self_improvement_engine: SelfImprovementEngine | None = None,
+        conflict_resolver: ConflictResolver | None = None,
     ) -> None:
         self._memory = memory_service or MemoryService()
+        self._conflict_resolver = conflict_resolver or ConflictResolver()
         if self_improvement_engine is not None:
             self._self_improvement = self_improvement_engine
         elif isinstance(self._memory, MemoryService):
@@ -42,6 +46,16 @@ class AgentLoop:
         logger.info("planning_started", {"goal": normalized_goal})
         tasks = self._goal_to_tasks(normalized_goal)
         plan = build_execution_plan(tasks)
+        planned_adaptations = self._collect_planned_adaptations(plan)
+        resolved_adaptations = self._conflict_resolver.resolve(planned_adaptations)
+        logger.info(
+            "conflict_resolution_completed",
+            {
+                "goal": normalized_goal,
+                "planned_adaptation_count": len(planned_adaptations),
+                "resolved_adaptation_count": len(resolved_adaptations),
+            },
+        )
 
         logger.info(
             "execution_started",
@@ -63,7 +77,14 @@ class AgentLoop:
             },
         )
 
-        self._persist(normalized_goal, plan, metrics, reflection, status)
+        self._persist(
+            normalized_goal,
+            plan,
+            metrics,
+            reflection,
+            status,
+            resolved_adaptation_count=len(resolved_adaptations),
+        )
         logger.info("memory_persisted", {"goal": normalized_goal, "status": status})
 
         self._run_self_improvement(normalized_goal, metrics, reflection, status)
@@ -147,6 +168,7 @@ class AgentLoop:
         metrics: dict[str, Any],
         reflection: ReflectionResult,
         status: str,
+        resolved_adaptation_count: int,
     ) -> None:
         self._memory.log_execution(
             status=status,
@@ -160,6 +182,7 @@ class AgentLoop:
                     "task_ids": [task.id for task in plan.ordered_tasks],
                     "total_tasks": len(plan.ordered_tasks),
                 },
+                "resolved_adaptations": resolved_adaptation_count,
                 "reflection": reflection.model_dump(),
             },
         )
@@ -250,3 +273,21 @@ class AgentLoop:
                 error=str(exc),
                 data={"goal": goal},
             )
+
+    def _collect_planned_adaptations(self, plan) -> list[Adaptation]:
+        metadata = getattr(plan, "metadata", None)
+        raw_adaptations = getattr(metadata, "adaptations", None)
+        if not isinstance(raw_adaptations, list):
+            return []
+
+        collected: list[Adaptation] = []
+        for item in raw_adaptations:
+            if isinstance(item, Adaptation):
+                collected.append(item)
+                continue
+            if isinstance(item, dict):
+                try:
+                    collected.append(Adaptation.model_validate(item))
+                except Exception:
+                    continue
+        return collected
