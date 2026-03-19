@@ -1773,3 +1773,51 @@ pytest tests/deployment
 
 ### Dependencies
 None — reuses existing project dependencies (`pytest`, standard-library `abc`, `dataclasses`).
+
+## Agent 30 — Execution Policy & Audit Layer
+
+### What was built
+- Declarative execution policy model for deterministic request governance.
+- Deterministic policy validator with explicit failure codes.
+- Structured execution audit record model.
+- Append-only JSONL audit logger with deterministic default path.
+- Execution hook wrapper that enforces: `validate -> execute -> record`.
+
+### Architecture decisions
+- Wrapped execution externally instead of modifying the execution engine.
+- Kept policy representation declarative and immutable (`dataclass(frozen=True)`).
+- Used explicit exception types (`PolicyValidationError`) to make behavior testable.
+- Used file-based append-only audit logging (`logs/execution_audit.jsonl`) with no mutation of prior lines.
+- Injected clock and record ID factory into hooks to make deterministic tests straightforward.
+
+### How execution governance works
+1. `execute_with_policy(...)` snapshots request data.
+2. `PolicyValidator.validate_or_raise(...)` enforces policy constraints.
+3. Existing execution engine callable runs unchanged.
+4. `AuditLogger.write_record(...)` appends a structured `ExecutionRecord`.
+5. Hook returns output on success or re-raises error after logging failure.
+
+### File structure
+```text
+app/execution/
+├── policy/
+│   ├── execution_policy.py
+│   └── policy_validator.py
+├── audit/
+│   ├── audit_models.py
+│   └── audit_logger.py
+└── hooks/
+  └── execution_hooks.py
+
+tests/execution/
+├── test_execution_policy.py
+├── test_audit_logger.py
+└── test_execution_hooks.py
+```
+
+### How to run tests
+Run full test suite:
+
+```bash
+pytest -q
+```
