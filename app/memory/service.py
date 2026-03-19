@@ -94,6 +94,24 @@ class MemoryService:
         self._repository.save(record)
         return record
 
+    def store_improvements(self, improvements: list) -> list[DecisionMemory]:
+        """Persist approved self-improvement actions as decision records."""
+        saved: list[DecisionMemory] = []
+        for action in improvements:
+            if hasattr(action, "__dataclass_fields__"):
+                payload = {field: getattr(action, field) for field in action.__dataclass_fields__}
+            elif isinstance(action, dict):
+                payload = dict(action)
+            else:
+                payload = {"action": str(action)}
+            record = self.log_decision(
+                decision="improvement_action",
+                reason="approved by self-improvement policy",
+                context={"improvement": payload},
+            )
+            saved.append(record)
+        return saved
+
     def get_recent(self, limit: int) -> list:
         all_records = []
         for memory_type in ("execution", "task", "failure", "decision"):

@@ -3,11 +3,11 @@
 from typing import Any
 
 from app.agent.schemas import AgentResult, ReflectionResult
-from app.agent.self_improvement import SelfImprovementEngine
 from app.core.logger import get_logger
 from app.execution.models import ExecutionReport, ExecutionStatus, ExecutionTask
 from app.execution.runner import run_plan
 from app.memory.service import MemoryService
+from app.self_improvement.engine import SelfImprovementEngine
 from app.planning.conflict_resolver import ConflictResolver
 from app.planning.models import Adaptation
 from app.planning import build_execution_plan
@@ -33,7 +33,7 @@ class AgentLoop:
         if self_improvement_engine is not None:
             self._self_improvement = self_improvement_engine
         elif isinstance(self._memory, MemoryService):
-            self._self_improvement = SelfImprovementEngine(memory_service=self._memory)
+            self._self_improvement = SelfImprovementEngine()
         else:
             self._self_improvement = None
 
@@ -225,46 +225,21 @@ class AgentLoop:
         reflection: ReflectionResult,
         status: str,
     ) -> None:
+        _ = metrics
+        _ = reflection
+        _ = status
         if self._self_improvement is None:
             logger.info("self_improvement_skipped", {"goal": goal, "reason": "disabled"})
             return
 
-        run_tasks: list[dict[str, Any]] = []
-        tasks: list[ExecutionTask] = list(metrics["tasks"])
-        for task in tasks:
-            run_tasks.append(
-                {
-                    "id": task.id,
-                    "status": task.status.value,
-                    "error": task.error,
-                    "skip_reason": task.skip_reason,
-                    "dependencies": list(task.dependencies),
-                }
-            )
-
-        run_data = {
-            "goal": goal,
-            "status": status,
-            "metrics": {
-                "total": int(metrics["total"]),
-                "completed": int(metrics["completed"]),
-                "failed": int(metrics["failed"]),
-                "skipped": int(metrics["skipped"]),
-                "actual_parallelism": 1 if run_tasks else 0,
-            },
-            "tasks": run_tasks,
-            "reflection": reflection.model_dump(),
-        }
-
         logger.info("self_improvement_started", {"goal": goal})
         try:
-            result = self._self_improvement.process(run_data)
+            self_improvements = self._self_improvement.run(self._memory)
             logger.info(
                 "self_improvement_completed",
                 {
                     "goal": goal,
-                    "insights": len(result.get("insights", [])),
-                    "suggestions": len(result.get("suggestions", [])),
+                    "approved_improvements": len(self_improvements),
                 },
             )
         except Exception as exc:

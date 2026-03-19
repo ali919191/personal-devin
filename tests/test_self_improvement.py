@@ -1,276 +1,210 @@
-"""Tests for Agent 07 self-improvement engine."""
+"""Tests for Agent 14 self-improvement system."""
 
-from app.agent.self_improvement import SelfImprovementEngine
-
-
-class StubMemoryService:
-    """Deterministic memory stub used for self-improvement tests."""
-
-    def __init__(self, patterns: list[dict] | None = None) -> None:
-        self._patterns = patterns or []
-        self.decisions: list[dict] = []
-
-    def get_recent(self, limit: int) -> list:
-        _ = limit
-        return []
-
-    def get_patterns(self) -> list[dict]:
-        return [dict(item) for item in self._patterns]
-
-    def log_decision(self, decision: str, reason: str, context: dict | None = None):
-        self.decisions.append(
-            {
-                "decision": decision,
-                "reason": reason,
-                "context": context or {},
-            }
-        )
-        return self.decisions[-1]
+from app.self_improvement.engine import SelfImprovementEngine
+from app.self_improvement.evaluator import Evaluator
+from app.self_improvement.handlers import IMPROVEMENT_HANDLERS
+from app.self_improvement.models import EvaluationResult, ImprovementAction, ImprovementType
+from app.self_improvement.optimizer import Optimizer
+from app.self_improvement.policy import ImprovementPolicy
 
 
-def test_successful_run_analysis() -> None:
-    engine = SelfImprovementEngine(memory_service=StubMemoryService())
-    run_data = {
-        "status": "success",
-        "metrics": {"total": 2, "completed": 2, "failed": 0, "skipped": 0},
-        "tasks": [
-            {"id": "task-1", "status": "completed", "error": None, "skip_reason": None},
-            {"id": "task-2", "status": "completed", "error": None, "skip_reason": None},
-        ],
-    }
+class StubMemoryStore:
+    def __init__(self, records: list[dict]) -> None:
+        self._records = [dict(item) for item in records]
 
-    analysis = engine.analyze_run(run_data)
-
-    assert analysis["classification"] == "success"
-    assert analysis["failure_causes"] == []
-    assert analysis["repeated_patterns"] == []
-    assert analysis["summary"]["success_rate"] == 1.0
+    def get_recent(self, limit: int) -> list[dict]:
+        return [dict(item) for item in self._records[:limit]]
 
 
-def test_failure_detection() -> None:
-    engine = SelfImprovementEngine(memory_service=StubMemoryService())
-    run_data = {
-        "status": "failure",
-        "metrics": {"total": 2, "completed": 0, "failed": 1, "skipped": 1},
-        "tasks": [
-            {"id": "task-1", "status": "failed", "error": "boom", "skip_reason": None},
-            {
-                "id": "task-2",
-                "status": "skipped",
-                "error": "dependency_failed:task-1",
-                "skip_reason": "dependency_failed:task-1",
-            },
-        ],
-    }
-
-    analysis = engine.analyze_run(run_data)
-
-    assert analysis["classification"] == "failure"
-    assert analysis["failure_causes"] == ["boom", "dependency_failed:task-1"]
-    assert analysis["failure_classification"] == [
-        {"task_id": "task-2", "category": "dependency_failure"},
-        {"task_id": "task-1", "category": "execution_error"},
-    ]
-    assert "low_success_rate" in analysis["inefficiencies"]
-
-
-def test_repeated_pattern_detection() -> None:
-    memory = StubMemoryService(patterns=[{"error": "boom", "count": 3}])
-    engine = SelfImprovementEngine(memory_service=memory)
-    run_data = {
-        "status": "failure",
-        "metrics": {"total": 1, "completed": 0, "failed": 1, "skipped": 0},
-        "tasks": [
-            {"id": "task-1", "status": "failed", "error": "boom", "skip_reason": None},
-        ],
-    }
-
-    analysis = engine.analyze_run(run_data)
-
-    assert {"kind": "failure_type", "value": "boom", "count": 3} in analysis[
-        "repeated_patterns"
+def _sample_records() -> list[dict]:
+    return [
+        {
+            "type": "execution",
+            "data": {"status": "success", "latency": 1.2},
+        },
+        {
+            "type": "execution",
+            "data": {"status": "failure", "latency": 2.8},
+        },
+        {
+            "type": "failure",
+            "data": {"error": "timeout"},
+        },
+        {
+            "type": "task",
+            "data": {"task_id": "task-1", "retry_count": 2},
+        },
+        {
+            "type": "decision",
+            "data": {"decision": "violation:policy_gate"},
+        },
     ]
 
 
-def test_repeated_pattern_detection_uses_unique_normalized_signals() -> None:
-    memory = StubMemoryService(
-        patterns=[
-            {"error": "boom", "count": 2},
-            {"error": "boom", "count": 2},
-            {"error": " boom ", "count": 9},
-        ]
+def test_evaluation_correctness() -> None:
+    evaluation = Evaluator().evaluate(_sample_records())
+
+    assert isinstance(evaluation, EvaluationResult)
+    assert evaluation.success_rate == 0.5
+    assert evaluation.avg_latency == 2.0
+    assert evaluation.failure_patterns == ["failure:timeout:1"]
+    assert evaluation.retry_patterns == ["retry:task-1:1"]
+    assert evaluation.policy_violations == ["policy_violation:violation:policy_gate:1"]
+
+
+def test_optimization_generation() -> None:
+    evaluation = EvaluationResult(
+        success_rate=0.5,
+        avg_latency=2.5,
+        failure_patterns=["failure:timeout:2"],
+        retry_patterns=["retry:task-1:2"],
+        policy_violations=[],
     )
-    engine = SelfImprovementEngine(memory_service=memory)
-    run_data = {
-        "status": "failure",
-        "metrics": {"total": 1, "completed": 0, "failed": 1, "skipped": 0},
-        "tasks": [
-            {"id": "task-1", "status": "failed", "error": "boom", "skip_reason": None},
-        ],
-    }
 
-    analysis = engine.analyze_run(run_data)
+    actions = Optimizer().optimize(evaluation)
 
-    matches = [
-        item
-        for item in analysis["repeated_patterns"]
-        if item.get("kind") == "failure_type" and item.get("value") == "boom"
+    assert actions
+    assert all(isinstance(action, ImprovementAction) for action in actions)
+    assert any(action.type == ImprovementType.ADJUST_POLICY for action in actions)
+    assert any(action.type == ImprovementType.CHANGE_STRATEGY for action in actions)
+    assert any(action.type == ImprovementType.INCREASE_CONFIDENCE for action in actions)
+
+
+def test_policy_filtering() -> None:
+    actions = [
+        ImprovementAction(type=ImprovementType.ADJUST_POLICY, target="retry_limit", value=3, confidence=0.85),
+        ImprovementAction(type=ImprovementType.ADJUST_POLICY, target="retry_limit", value=2, confidence=0.7),
+        ImprovementAction(type=ImprovementType.CHANGE_STRATEGY, target="timeout", value=10, confidence=0.65),
+        ImprovementAction(type=ImprovementType.INCREASE_CONFIDENCE, target="policy_gate", value="strict", confidence=0.9),
     ]
 
-    assert matches == [{"kind": "failure_type", "value": "boom", "count": 9}]
+    approved = ImprovementPolicy(confidence_threshold=0.7).approve(actions)
+
+    assert all(action.confidence >= 0.7 for action in approved)
+    assert [action for action in approved if action.target == "retry_limit"] == [
+        ImprovementAction(type=ImprovementType.ADJUST_POLICY, target="retry_limit", value=3, confidence=0.85)
+    ]
 
 
-def test_deterministic_output_validation() -> None:
-    memory = StubMemoryService(patterns=[{"error": "boom", "count": 2}])
-    engine = SelfImprovementEngine(memory_service=memory)
-    run_data = {
-        "goal": "Run tests",
-        "status": "partial",
-        "metrics": {"total": 3, "completed": 2, "failed": 1, "skipped": 0},
-        "tasks": [
-            {"id": "task-1", "status": "completed", "error": None, "skip_reason": None},
-            {"id": "task-2", "status": "completed", "error": None, "skip_reason": None},
-            {"id": "task-3", "status": "failed", "error": "boom", "skip_reason": None},
-        ],
-    }
+def test_determinism_same_input_same_output() -> None:
+    store = StubMemoryStore(_sample_records())
+    engine = SelfImprovementEngine()
 
-    first = engine.process(run_data)
-    second = engine.process(run_data)
+    first = engine.run(store)
+    second = engine.run(store)
 
     assert first == second
-    type_order = {
-        "failure_pattern": 0,
-        "structure_signal": 1,
-        "efficiency_signal": 2,
-        "warning": 3,
-        "optimization": 4,
-    }
-    assert [insight["type"] for insight in first["insights"]] == sorted(
-        [insight["type"] for insight in first["insights"]],
-        key=lambda value: type_order[value],
+
+
+def test_no_invalid_improvements() -> None:
+    low_confidence_records = [
+        {
+            "type": "execution",
+            "data": {"status": "success", "latency": 1.0},
+        }
+    ]
+    store = StubMemoryStore(low_confidence_records)
+    engine = SelfImprovementEngine(policy=ImprovementPolicy(confidence_threshold=0.95))
+
+    approved = engine.run(store)
+
+    assert approved == []
+
+
+def test_empty_history_evaluates_defaults() -> None:
+    evaluation = Evaluator().evaluate([])
+
+    assert evaluation.success_rate == 1.0
+    assert evaluation.avg_latency == 0.0
+    assert evaluation.failure_patterns == []
+    assert evaluation.retry_patterns == []
+    assert evaluation.policy_violations == []
+
+
+def test_optimizer_no_actions_on_good_run() -> None:
+    evaluation = EvaluationResult(
+        success_rate=1.0,
+        avg_latency=0.5,
+        failure_patterns=[],
+        retry_patterns=[],
+        policy_violations=[],
     )
-    assert [suggestion["priority"] for suggestion in first["suggestions"]] == sorted(
-        [suggestion["priority"] for suggestion in first["suggestions"]],
-        key=lambda value: {"high": 0, "medium": 1, "low": 2}[value],
+
+    actions = Optimizer().optimize(evaluation)
+
+    assert actions == []
+
+
+def test_policy_deduplicates_by_target() -> None:
+    actions = [
+        ImprovementAction(type=ImprovementType.ADJUST_POLICY, target="retry_limit", value=3, confidence=0.85),
+        ImprovementAction(type=ImprovementType.ADJUST_POLICY, target="retry_limit", value=2, confidence=0.75),
+        ImprovementAction(type=ImprovementType.ADJUST_POLICY, target="retry_limit", value=5, confidence=0.80),
+    ]
+
+    approved = ImprovementPolicy(confidence_threshold=0.7).approve(actions)
+
+    assert len([a for a in approved if a.target == "retry_limit"]) == 1
+    assert approved[0].confidence == 0.85
+
+
+def test_evaluator_ignores_unknown_record_types() -> None:
+    records = [
+        {"type": "unknown", "data": {"status": "failure"}},
+        {"type": "execution", "data": {"status": "success", "latency": 1.0}},
+        {"type": "bogus", "data": {"error": "some error"}},
+    ]
+
+    evaluation = Evaluator().evaluate(records)
+
+    assert evaluation.success_rate == 1.0
+    assert evaluation.failure_patterns == []
+
+
+def test_policy_violations_trigger_guard_action() -> None:
+    evaluation = EvaluationResult(
+        success_rate=1.0,
+        avg_latency=0.5,
+        failure_patterns=[],
+        retry_patterns=[],
+        policy_violations=["policy_violation:violation:guard:1"],
     )
 
+    actions = Optimizer().optimize(evaluation)
 
-def test_empty_input_handling() -> None:
-    memory = StubMemoryService()
-    engine = SelfImprovementEngine(memory_service=memory)
-
-    result = engine.process({})
-
-    assert result["analysis"]["classification"] == "unknown"
-    assert result["analysis"]["inefficiencies"] == ["missing_run_data"]
-    assert len(result["insights"]) >= 1
-    assert len(result["suggestions"]) >= 1
-    assert len(memory.decisions) == 3
-    assert memory.decisions[2]["context"]["type"] == "self_improvement_insight"
+    assert any(action.target == "policy_violation_guard" for action in actions)
 
 
-def test_confidence_model_is_fixed() -> None:
-    engine = SelfImprovementEngine(memory_service=StubMemoryService())
-    analysis = {
-        "classification": "partial",
-        "failure_causes": ["boom"],
-        "structure_signals": ["Graph depth = 3 (linear chain)"],
-        "efficiency_signals": ["Completion efficiency = 0.67 (medium)"],
-        "repeated_patterns": [{"kind": "task_error", "value": "boom", "count": 2}],
-        "inefficiencies": ["skipped_tasks_present"],
-    }
+def test_engine_persists_improvements() -> None:
+    class CapturingStore(StubMemoryStore):
+        def __init__(self, records):
+            super().__init__(records)
+            self.persisted: list = []
 
-    insights = engine.generate_insights(analysis)
+        def store_improvements(self, improvements: list) -> None:
+            self.persisted.extend(improvements)
 
-    confidence_by_type = {insight["type"]: insight["confidence"] for insight in insights}
-    assert confidence_by_type["failure_pattern"] == 0.9
-    assert confidence_by_type["structure_signal"] == 0.8
-    assert confidence_by_type["efficiency_signal"] == 0.75
-    assert confidence_by_type["warning"] == 0.7
-    assert confidence_by_type["optimization"] == 0.6
+    store = CapturingStore(_sample_records())
+    engine = SelfImprovementEngine()
+
+    approved = engine.run(store)
+
+    assert store.persisted == approved
 
 
-def test_inefficiency_detects_repeated_task_retries() -> None:
-    engine = SelfImprovementEngine(memory_service=StubMemoryService())
-    run_data = {
-        "status": "partial",
-        "metrics": {"total": 2, "completed": 1, "failed": 1, "skipped": 0},
-        "tasks": [
-            {
-                "id": "task-1",
-                "status": "completed",
-                "error": None,
-                "skip_reason": None,
-                "retry_count": 2,
-            },
-            {
-                "id": "task-2",
-                "status": "failed",
-                "error": "boom",
-                "skip_reason": None,
-            },
-        ],
-    }
-
-    analysis = engine.analyze_run(run_data)
-
-    assert "repeated_task_retries" in analysis["inefficiencies"]
+def test_improvement_handlers_covers_all_enum_members() -> None:
+    for member in ImprovementType:
+        assert member in IMPROVEMENT_HANDLERS, f"No handler registered for {member}"
 
 
-def test_success_run_produces_structure_and_efficiency_signals() -> None:
-    engine = SelfImprovementEngine(memory_service=StubMemoryService())
-    run_data = {
-        "status": "success",
-        "metrics": {
-            "total": 5,
-            "completed": 5,
-            "failed": 0,
-            "skipped": 0,
-            "actual_parallelism": 1,
-        },
-        "tasks": [
-            {"id": "A", "status": "completed", "error": None, "skip_reason": None, "dependencies": []},
-            {"id": "B", "status": "completed", "error": None, "skip_reason": None, "dependencies": ["A"]},
-            {"id": "C", "status": "completed", "error": None, "skip_reason": None, "dependencies": ["B"]},
-            {"id": "D", "status": "completed", "error": None, "skip_reason": None, "dependencies": ["C"]},
-            {"id": "E", "status": "completed", "error": None, "skip_reason": None, "dependencies": ["D"]},
-        ],
-    }
-
-    result = engine.process(run_data)
-
-    insight_types = [insight["type"] for insight in result["insights"]]
-    insight_messages = [insight["message"] for insight in result["insights"]]
-
-    assert "structure_signal" in insight_types
-    assert "efficiency_signal" in insight_types
-    assert any("Graph depth = 5 (linear chain)" in message for message in insight_messages)
-    assert any("Completion efficiency = 1.00 (high)" in message for message in insight_messages)
-    assert all("Run is stable with no immediate optimization flags" != message for message in insight_messages)
-
-
-def test_wide_success_run_reports_parallelism_gap() -> None:
-    engine = SelfImprovementEngine(memory_service=StubMemoryService())
-    run_data = {
-        "status": "success",
-        "metrics": {
-            "total": 4,
-            "completed": 4,
-            "failed": 0,
-            "skipped": 0,
-            "actual_parallelism": 1,
-        },
-        "tasks": [
-            {"id": "A", "status": "completed", "error": None, "skip_reason": None, "dependencies": []},
-            {"id": "B", "status": "completed", "error": None, "skip_reason": None, "dependencies": []},
-            {"id": "C", "status": "completed", "error": None, "skip_reason": None, "dependencies": []},
-            {"id": "D", "status": "completed", "error": None, "skip_reason": None, "dependencies": []},
-        ],
-    }
-
-    result = engine.process(run_data)
-    insight_messages = [insight["message"] for insight in result["insights"]]
-
-    assert "No parallel execution opportunities utilized" in insight_messages
-    assert "Wide graph executed sequentially" in insight_messages
-    assert "Execution efficiency: high but non-parallel" in insight_messages
+def test_improvement_handler_stubs_return_contract_shape() -> None:
+    for improvement_type, handler in IMPROVEMENT_HANDLERS.items():
+        action = ImprovementAction(type=improvement_type, target="test_target", value="test_value", confidence=0.8)
+        result = handler(action)
+        assert isinstance(result, dict)
+        assert "handler" in result
+        assert "target" in result
+        assert "value" in result
+        assert "applied" in result
+        assert result["target"] == "test_target"
+        assert result["value"] == "test_value"
