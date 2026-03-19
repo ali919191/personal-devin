@@ -122,7 +122,7 @@ class AgentLoop:
         metrics, status, evaluation_result, feedback_signal, runtime_adaptations = self._run_step_with_retry(
             iteration_id=self._last_iteration_id,
             step=LoopStep.VALIDATE,
-            operation=lambda: self._validate(execution_report),
+            operation=lambda: self._validate(execution_report, applied_modifiers),
         )
         reflection = self._run_step_with_retry(
             iteration_id=self._last_iteration_id,
@@ -239,12 +239,14 @@ class AgentLoop:
     def _validate(
         self,
         execution_report: ExecutionReport,
+        applied_modifiers: dict[str, Any],
     ) -> tuple[dict[str, Any], str, EvaluationResult, FeedbackSignal, list]:
         metrics = self._extract_metrics(execution_report)
         status = self._classify(metrics)
         evaluation_result = self._evaluate(
             execution_report=execution_report,
             status=status,
+            applied_modifiers=applied_modifiers,
         )
         feedback_signal = self._feedback_engine.generate_feedback(
             execution=execution_report,
@@ -253,7 +255,12 @@ class AgentLoop:
         runtime_adaptations = self._route_feedback_to_adaptation_inputs(feedback_signal)
         return metrics, status, evaluation_result, feedback_signal, runtime_adaptations
 
-    def _evaluate(self, execution_report: ExecutionReport, status: str) -> EvaluationResult:
+    def _evaluate(
+        self,
+        execution_report: ExecutionReport,
+        status: str,
+        applied_modifiers: dict[str, Any],
+    ) -> EvaluationResult:
         evaluation_input = EvaluationInput(
             task_id=self._last_iteration_id,
             expected_output="completed",
@@ -266,7 +273,19 @@ class AgentLoop:
                 "skipped_tasks": int(execution_report.skipped_tasks),
             },
         )
-        return self._evaluator.evaluate(evaluation_input)
+        result = self._evaluator.evaluate(evaluation_input)
+        if not applied_modifiers:
+            return result
+
+        metrics = dict(result.metrics)
+        metrics["applied_modifiers"] = dict(applied_modifiers)
+        return EvaluationResult(
+            task_id=result.task_id,
+            success=result.success,
+            score=result.score,
+            feedback=result.feedback,
+            metrics=metrics,
+        )
 
     def _evaluation_actual_output(self, execution_report: ExecutionReport, status: str) -> str:
         if int(execution_report.failed_tasks) == 0 and int(execution_report.skipped_tasks) == 0:

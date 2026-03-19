@@ -60,7 +60,7 @@ class FeedbackEngine:
         """Generate a deterministic feedback signal from a single run."""
         normalized_score = self._normalize_score(evaluation.score)
         failure_type = self._classify_failure(execution, evaluation)
-        suggestions = self._suggestions_for(failure_type)
+        suggestions = self._suggestions_for_evaluation(failure_type, evaluation)
         success = bool(evaluation.success) and failure_type is None
 
         if failure_type is None:
@@ -132,6 +132,19 @@ class FeedbackEngine:
             return []
         suggestions = self._SUGGESTIONS.get(failure_type, ["review_evaluation_contract"])
         return list(suggestions)
+
+    def _suggestions_for_evaluation(
+        self,
+        failure_type: str | None,
+        evaluation: EvaluationResult,
+    ) -> list[str]:
+        suggestions = self._suggestions_for(failure_type)
+        applied_modifiers = evaluation.metrics.get("applied_modifiers")
+        if failure_type is None or not isinstance(applied_modifiers, dict) or not applied_modifiers:
+            return suggestions
+
+        suggestions.append("review_injected_adaptation_effectiveness")
+        return suggestions
 
     def _normalize_score(self, score: float) -> float:
         bounded = min(max(float(score), 0.0), 1.0)

@@ -561,6 +561,7 @@ class TestClosedLoopManualInjection:
         assert adaptation != []
         assert result2.applied_modifiers != result1.applied_modifiers
         assert result2.applied_modifiers != {}
+        assert result2.feedback != result1.feedback or result2.adaptation != result1.adaptation
         assert result2 != result1
 
 

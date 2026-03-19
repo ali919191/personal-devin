@@ -146,3 +146,23 @@ def test_batch_feedback_requires_aligned_inputs() -> None:
 
     with pytest.raises(ValueError, match="same length"):
         engine.batch_feedback(reports, evaluations)
+
+
+def test_feedback_includes_injected_adaptation_follow_up_when_failure_persists() -> None:
+    engine = FeedbackEngine(now_fn=_now)
+    report = _report([_task("task-1", ExecutionStatus.FAILED)])
+    evaluation = EvaluationResult(
+        task_id="exec-6",
+        success=False,
+        score=0.0,
+        feedback="deterministic evaluation",
+        metrics={
+            "match_type": "failure",
+            "applied_modifiers": {"retry_limit": 3},
+        },
+    )
+
+    signal = engine.generate_feedback(report, evaluation)
+
+    assert signal.failure_type == "execution_failure"
+    assert "review_injected_adaptation_effectiveness" in signal.improvement_suggestions
