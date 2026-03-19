@@ -77,6 +77,7 @@ class TaskNode(BaseModel):
         ...,
         description="IDs of tasks this task depends on",
     )
+    metadata: dict = Field(default_factory=dict, description="Task metadata")
 
     @classmethod
     def from_dict(cls, task: dict) -> "TaskNode":
@@ -91,7 +92,7 @@ class TaskNode(BaseModel):
         """Detailed representation."""
         return (
             f"TaskNode(id={self.id!r}, description={self.description!r}, "
-            f"dependencies={self.dependencies})"
+            f"dependencies={self.dependencies}, metadata={self.metadata})"
         )
 
 
