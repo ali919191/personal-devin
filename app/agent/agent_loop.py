@@ -115,7 +115,7 @@ class AgentLoop:
             step=LoopStep.EXECUTE,
             operation=lambda: self._execute(plan_context.plan),
         )
-        metrics, status, evaluation_result, feedback_signal = self._run_step_with_retry(
+        metrics, status, evaluation_result, feedback_signal, runtime_adaptations = self._run_step_with_retry(
             iteration_id=self._last_iteration_id,
             step=LoopStep.VALIDATE,
             operation=lambda: self._validate(execution_report),
@@ -140,6 +140,9 @@ class AgentLoop:
             plan=plan_context.plan,
             execution=execution_report,
             reflection=reflection,
+            evaluation=evaluation_result,
+            feedback=feedback_signal,
+            adaptation=runtime_adaptations,
         )
 
     def _run_step_with_retry(
@@ -230,7 +233,7 @@ class AgentLoop:
     def _validate(
         self,
         execution_report: ExecutionReport,
-    ) -> tuple[dict[str, Any], str, EvaluationResult, FeedbackSignal]:
+    ) -> tuple[dict[str, Any], str, EvaluationResult, FeedbackSignal, list]:
         metrics = self._extract_metrics(execution_report)
         status = self._classify(metrics)
         evaluation_result = self._evaluate(
@@ -241,8 +244,8 @@ class AgentLoop:
             execution=execution_report,
             evaluation=evaluation_result,
         )
-        self._route_feedback_to_adaptation_inputs(feedback_signal)
-        return metrics, status, evaluation_result, feedback_signal
+        runtime_adaptations = self._route_feedback_to_adaptation_inputs(feedback_signal)
+        return metrics, status, evaluation_result, feedback_signal, runtime_adaptations
 
     def _evaluate(self, execution_report: ExecutionReport, status: str) -> EvaluationResult:
         evaluation_input = EvaluationInput(
@@ -266,7 +269,7 @@ class AgentLoop:
             return "completed_with_failures"
         return "failed"
 
-    def _route_feedback_to_adaptation_inputs(self, feedback_signal: FeedbackSignal) -> None:
+    def _route_feedback_to_adaptation_inputs(self, feedback_signal: FeedbackSignal) -> list:
         runtime_adaptations = self._adaptation_engine.process_feedback(feedback_signal)
 
         self._memory.log_decision(
@@ -294,6 +297,8 @@ class AgentLoop:
                     "suggestions": list(feedback_signal.improvement_suggestions),
                 },
             )
+
+        return runtime_adaptations
 
     def _serialize_runtime_adaptations(
         self,
