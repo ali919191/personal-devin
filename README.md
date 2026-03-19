@@ -1077,3 +1077,54 @@ pytest tests/test_integrations_control.py
 ### Dependencies
 
 None
+
+## Agent 11 — Observability & Analysis Engine
+
+### What was built
+
+- New analysis module at app/analysis with a deterministic, read-only analysis pipeline.
+- Structured report models:
+  - AnalysisReport
+  - ExecutionTraceSummary
+  - FailurePattern
+  - Recommendation
+- Analyzer orchestration layer that consumes execution logs and memory records and emits AnalysisReport.
+- Pattern detector for recurring failures, inefficiencies, and retry loops.
+- Recommendation engine that maps patterns to prioritized, actionable suggestions.
+- Pluggable analysis registry for detector and recommendation component registration.
+
+### Architecture decisions
+
+- Read-only behavior guarantee:
+  - No modifications to execution, agent, or planning runtime behavior.
+  - Analyzer only reads supplied logs and memory records.
+- Deterministic output:
+  - Stable sorting for patterns and recommendations.
+  - Rule-based confidence scoring.
+  - No randomness or time-based branching in analysis logic.
+- Pluggable composition:
+  - Registry supports custom detector/recommendation functions.
+  - Default registry wires built-in detector and recommendation engine.
+- Structured observability:
+  - analysis_run_start and analysis_run_end structured logs emitted with execution_id and summary metrics.
+
+### How to run
+
+Run focused analysis tests:
+
+```bash
+pytest tests/test_analysis_engine.py -q
+```
+
+Run full suite:
+
+```bash
+pytest -q
+```
+
+### Dependencies
+
+- No new third-party dependencies.
+- Reuses existing project modules:
+  - app/core/logger
+  - app/memory models/contracts
