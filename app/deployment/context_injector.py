@@ -6,7 +6,7 @@ from copy import deepcopy
 from dataclasses import asdict, is_dataclass
 from typing import Any
 
-from app.deployment.deployment_context import DeploymentContext
+from app.deployment.deployment_context import DeploymentContext, context_fingerprint
 
 
 def _normalize_mapping(name: str, value: Any) -> dict[str, Any]:
@@ -55,9 +55,6 @@ def _normalize_config(config: dict[str, Any]) -> tuple[dict[str, Any], dict[str,
     if not isinstance(metadata, dict):
         raise TypeError("config metadata must be a dictionary")
 
-    execution_id = metadata.get("execution_id") or config.get("execution_id") or "default"
-    metadata["execution_id"] = execution_id
-
     return variables, metadata
 
 
@@ -66,8 +63,20 @@ def build_deployment_context(resolved_env: dict[str, Any], config: dict[str, Any
     normalized_env = _normalize_environment(_normalize_mapping("resolved_env", resolved_env))
     normalized_config = _normalize_mapping("config", config)
     variables, metadata = _normalize_config(normalized_config)
+    provisional_context = DeploymentContext(
+        environment=normalized_env,
+        variables=variables,
+        metadata={
+            **metadata,
+            "execution_id": str(metadata.get("execution_id") or "provisional"),
+        },
+    )
+    fingerprint = context_fingerprint(provisional_context)
+    final_metadata = deepcopy(metadata)
+    final_metadata["context_fingerprint"] = fingerprint
+    final_metadata["execution_id"] = str(final_metadata.get("execution_id") or fingerprint)
     return DeploymentContext(
         environment=normalized_env,
         variables=variables,
-        metadata=metadata,
+        metadata=final_metadata,
     )

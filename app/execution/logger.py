@@ -19,9 +19,22 @@ class ExecutionLogger:
         """Initialise with a module-scoped logger."""
         self._logger: StructuredLogger = get_logger(name)
 
-    def log_run_started(self, total_tasks: int) -> None:
+    def log_run_started(
+        self,
+        total_tasks: int,
+        *,
+        execution_id: str,
+        fingerprint: str,
+    ) -> None:
         """Log the start of an execution run."""
-        self._logger.info("execution_run_started", {"total_tasks": total_tasks})
+        self._logger.info(
+            "execution_started",
+            {
+                "execution_id": execution_id,
+                "fingerprint": fingerprint,
+                "total_tasks": total_tasks,
+            },
+        )
 
     def log_step_started(self, task: "ExecutionTask") -> None:
         """Log that a task has started executing."""
@@ -66,6 +79,23 @@ class ExecutionLogger:
                 "completed_tasks": report.completed_tasks,
                 "failed_tasks": report.failed_tasks,
                 "skipped_tasks": report.skipped_tasks,
+            },
+        )
+
+    def log_run_failed(
+        self,
+        *,
+        execution_id: str,
+        fingerprint: str,
+        error: str,
+    ) -> None:
+        """Log a run-level failure anchored to the deployment context fingerprint."""
+        self._logger.error(
+            "execution_failed",
+            error,
+            {
+                "execution_id": execution_id,
+                "fingerprint": fingerprint,
             },
         )
 
