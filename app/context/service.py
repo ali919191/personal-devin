@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from copy import deepcopy
+import copy
 from pathlib import Path
 from typing import Any
 
@@ -63,7 +63,7 @@ class EnvironmentContextService:
         """Return immutable context or fail fast if not loaded."""
         if self._context is None:
             raise MissingEnvironmentContextError("environment context has not been loaded")
-        return self._context.model_copy(deep=True)
+        return copy.deepcopy(self._context)
 
     def get_cache_key(self) -> str:
         """Return deterministic cache key for current context."""
@@ -77,10 +77,10 @@ class EnvironmentContextService:
         return {
             "cloud_provider": context.cloud.provider,
             "cloud_region": context.cloud.region,
-            "compute_orchestrator": context.compute.orchestrator,
-            "identity_type": context.identity.type,
-            "budget": context.constraints.budget,
-            "compliance": sorted(context.constraints.compliance),
+            "compute_orchestrator": context.get_compute_type(),
+            "identity_type": context.get_identity_type(),
+            "budget": context.get_budget(),
+            "compliance": context.get_compliance_controls(),
             "cache_key": self.get_cache_key(),
         }
 
@@ -91,10 +91,12 @@ class EnvironmentContextService:
             "provider": context.cloud.provider,
             "region": context.cloud.region,
             "network_topology": context.network.topology,
-            "data_types": sorted([entry.type for entry in context.data]),
+            "data_types": context.get_data_types(),
             "cache_key": self.get_cache_key(),
         }
 
     def _build_cache_key(self, payload: dict[str, Any]) -> str:
-        canonical_payload = json.dumps(deepcopy(payload), sort_keys=True, separators=(",", ":"))
+        canonical_payload = json.dumps(
+            copy.deepcopy(payload), sort_keys=True, separators=(",", ":")
+        )
         return hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()

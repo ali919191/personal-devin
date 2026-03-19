@@ -69,6 +69,22 @@ class TestContextValidation:
         with pytest.raises(InvalidEnvironmentConfigurationError):
             service.load_from_payload(payload)
 
+    def test_loaded_context_is_immutable(self) -> None:
+        service = EnvironmentContextService()
+        context = service.load_from_payload(valid_environment_payload())
+
+        with pytest.raises(Exception):
+            context.cloud = context.cloud  # type: ignore[misc]
+
+    def test_returned_context_mutation_does_not_change_cached_context(self) -> None:
+        service = EnvironmentContextService()
+        context_copy = service.load_from_payload(valid_environment_payload())
+
+        context_copy.compute.config["cluster"] = "mutated"
+
+        fresh_copy = service.get_context()
+        assert fresh_copy.compute.config["cluster"] == "core"
+
 
 class TestContextIntegration:
     def test_planning_receives_context(self) -> None:
@@ -101,7 +117,7 @@ class TestContextIntegration:
 
         plan = build_execution_plan(tasks)
 
-        with pytest.raises(InvalidEnvironmentConfigurationError):
+        with pytest.raises(InvalidEnvironmentConfigurationError, match="orchestrator"):
             run_plan(plan, environment_context=valid_environment_payload())
 
     def test_execution_runs_when_context_is_compatible(self) -> None:

@@ -98,31 +98,32 @@ class EnvironmentContextValidator:
         environment: EnvironmentContext,
     ) -> None:
         """Ensure plan metadata requirements are compatible with environment capabilities."""
-        available_data_types = {source.type for source in environment.data}
-        available_compliance = set(environment.constraints.compliance)
-
         for task in plan.ordered_tasks:
             metadata = task.metadata if isinstance(task.metadata, dict) else {}
 
             required_orchestrator = metadata.get("required_compute_orchestrator")
             if (
                 required_orchestrator is not None
-                and required_orchestrator != environment.compute.orchestrator
+                and not environment.supports("compute", required_orchestrator)
             ):
                 raise InvalidEnvironmentConfigurationError(
                     f"task '{task.id}' requires orchestrator '{required_orchestrator}', "
-                    f"got '{environment.compute.orchestrator}'"
+                    f"got '{environment.get_compute_type()}'"
                 )
 
             required_identity = metadata.get("required_identity_type")
-            if required_identity is not None and required_identity != environment.identity.type:
+            if required_identity is not None and not environment.supports(
+                "identity", required_identity
+            ):
                 raise InvalidEnvironmentConfigurationError(
                     f"task '{task.id}' requires identity '{required_identity}', "
-                    f"got '{environment.identity.type}'"
+                    f"got '{environment.get_identity_type()}'"
                 )
 
             required_topology = metadata.get("required_network_topology")
-            if required_topology is not None and required_topology != environment.network.topology:
+            if required_topology is not None and not environment.supports(
+                "network_topology", required_topology
+            ):
                 raise InvalidEnvironmentConfigurationError(
                     f"task '{task.id}' requires network topology '{required_topology}', "
                     f"got '{environment.network.topology}'"
@@ -137,7 +138,11 @@ class EnvironmentContextValidator:
                         f"task '{task.id}' has invalid required_data_types"
                     )
                 missing_data_types = sorted(
-                    {data_type for data_type in required_data_types if data_type not in available_data_types}
+                    {
+                        data_type
+                        for data_type in required_data_types
+                        if not environment.supports("data_type", data_type)
+                    }
                 )
                 if missing_data_types:
                     raise InvalidEnvironmentConfigurationError(
@@ -154,7 +159,11 @@ class EnvironmentContextValidator:
                         f"task '{task.id}' has invalid required_compliance"
                     )
                 missing_compliance = sorted(
-                    {item for item in required_compliance if item not in available_compliance}
+                    {
+                        item
+                        for item in required_compliance
+                        if not environment.supports("compliance", item)
+                    }
                 )
                 if missing_compliance:
                     raise InvalidEnvironmentConfigurationError(

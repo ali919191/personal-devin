@@ -88,3 +88,37 @@ class EnvironmentContext(BaseModel):
         if not value:
             raise ValueError("data must contain at least one source")
         return value
+
+    def get_compute_type(self) -> str:
+        """Return the configured compute orchestrator capability."""
+        return self.compute.orchestrator
+
+    def get_identity_type(self) -> str:
+        """Return the configured identity capability."""
+        return self.identity.type
+
+    def get_budget(self) -> str:
+        """Return the configured budget constraint."""
+        return self.constraints.budget
+
+    def get_compliance_controls(self) -> list[str]:
+        """Return compliance controls in deterministic order."""
+        return sorted(self.constraints.compliance)
+
+    def get_data_types(self) -> list[str]:
+        """Return supported data-source types in deterministic order."""
+        return sorted([source.type for source in self.data])
+
+    def supports(self, capability: str, value: str) -> bool:
+        """Capability-based feature check used by planning and execution layers."""
+        if capability == "compute":
+            return value == self.get_compute_type()
+        if capability == "identity":
+            return value == self.get_identity_type()
+        if capability == "network_topology":
+            return value == self.network.topology
+        if capability == "data_type":
+            return value in self.get_data_types()
+        if capability == "compliance":
+            return value in self.get_compliance_controls()
+        return False
