@@ -9,11 +9,23 @@ from typing import Any, Literal, Mapping, Protocol, runtime_checkable
 
 @runtime_checkable
 class InfrastructureContext(Protocol):
-    """Strict context contract required by all infrastructure providers."""
+    """Strict context contract required by all infrastructure providers.
+
+    Agent 27 extension
+    ------------------
+    ``region``, ``provider_type``, and ``credentials_ref`` are added so the
+    environment adapter can pass structured targeting information through the
+    provider boundary without embedding raw secret values.
+    """
 
     environment: str
     execution_id: str
     services: list[str]
+
+    # Agent 27 — environment adapter fields
+    region: str
+    provider_type: str
+    credentials_ref: str
 
 
 @dataclass(frozen=True)
@@ -23,6 +35,11 @@ class DefaultInfrastructureContext:
     environment: str = "local"
     execution_id: str = "default"
     services: list[str] = field(default_factory=list)
+
+    # Agent 27 — environment adapter fields
+    region: str = "local"
+    provider_type: str = "local"
+    credentials_ref: str = ""
 
 
 @dataclass(frozen=True)
