@@ -12,8 +12,10 @@ from app.agent.logger import LoopLogger
 from app.agent.loop_state import LoopState, LoopStatus, LoopStep, utc_timestamp
 from app.agent.retry import FailureType, RetryPolicy, classify_failure
 from app.agent.schemas import AgentResult, ReflectionResult
+from app.evaluation.models import EvaluationResult
 from app.execution.models import ExecutionReport, ExecutionStatus, ExecutionTask
 from app.execution.runner import run_plan
+from app.feedback import FeedbackEngine, FeedbackSignal
 from app.memory.service import MemoryService
 from app.planning.models import Adaptation
 from app.planning import build_execution_plan, plan as plan_task
@@ -38,6 +40,7 @@ class AgentLoop:
         self,
         memory_service: MemoryService | None = None,
         self_improvement_engine: SelfImprovementEngine | None = None,
+        feedback_engine: FeedbackEngine | None = None,
         conflict_resolver: ConflictResolver | None = None,
         retry_policy: RetryPolicy | None = None,
         loop_logger: LoopLogger | None = None,
@@ -52,6 +55,7 @@ class AgentLoop:
         self._conflict_resolver = conflict_resolver or ConflictResolver()
         self._retry_policy = retry_policy or RetryPolicy(max_attempts=3)
         self._loop_logger = loop_logger or LoopLogger(now_fn=self._now_fn)
+        self._feedback_engine = feedback_engine or FeedbackEngine(now_fn=self._now_fn)
         self._state_history: list[LoopState] = []
         self._last_iteration_id = ""
 
@@ -103,7 +107,7 @@ class AgentLoop:
             step=LoopStep.EXECUTE,
             operation=lambda: self._execute(plan_context.plan),
         )
-        metrics, status = self._run_step_with_retry(
+        metrics, status, evaluation_result, feedback_signal = self._run_step_with_retry(
             iteration_id=self._last_iteration_id,
             step=LoopStep.VALIDATE,
             operation=lambda: self._validate(execution_report),
@@ -115,6 +119,8 @@ class AgentLoop:
                 goal=normalized_goal,
                 plan=plan_context.plan,
                 metrics=metrics,
+                evaluation_result=evaluation_result,
+                feedback_signal=feedback_signal,
                 status=status,
                 resolved_adaptation_count=plan_context.resolved_adaptation_count,
             ),
@@ -213,10 +219,82 @@ class AgentLoop:
     def _execute(self, plan) -> ExecutionReport:
         return run_plan(plan)
 
-    def _validate(self, execution_report: ExecutionReport) -> tuple[dict[str, Any], str]:
+    def _validate(
+        self,
+        execution_report: ExecutionReport,
+    ) -> tuple[dict[str, Any], str, EvaluationResult, FeedbackSignal]:
         metrics = self._extract_metrics(execution_report)
         status = self._classify(metrics)
-        return metrics, status
+        evaluation_result = self._evaluate(
+            execution_report=execution_report,
+            status=status,
+        )
+        feedback_signal = self._feedback_engine.generate_feedback(
+            execution=execution_report,
+            evaluation=evaluation_result,
+        )
+        self._route_feedback_to_adaptation_inputs(feedback_signal)
+        return metrics, status, evaluation_result, feedback_signal
+
+    def _evaluate(self, execution_report: ExecutionReport, status: str) -> EvaluationResult:
+        total = max(int(execution_report.total_tasks), 0)
+        completed = max(int(execution_report.completed_tasks), 0)
+        failed = max(int(execution_report.failed_tasks), 0)
+        skipped = max(int(execution_report.skipped_tasks), 0)
+
+        if total == 0:
+            score = 1.0
+            match_type = "no_tasks"
+        else:
+            score = completed / total
+            match_type = "exact" if failed == 0 and skipped == 0 else "failure"
+
+        feedback = {
+            SUCCESS: "Execution meets expected outcome.",
+            PARTIAL: "Execution partially met expected outcome.",
+            FAILURE: "Execution did not meet expected outcome.",
+        }[status]
+
+        return EvaluationResult(
+            task_id=self._last_iteration_id,
+            success=status == SUCCESS,
+            score=round(score, 4),
+            feedback=feedback,
+            metrics={
+                "status": status,
+                "completed_tasks": completed,
+                "failed_tasks": failed,
+                "skipped_tasks": skipped,
+                "total_tasks": total,
+                "match_type": match_type,
+            },
+        )
+
+    def _route_feedback_to_adaptation_inputs(self, feedback_signal: FeedbackSignal) -> None:
+        self._memory.log_decision(
+            decision="feedback_signal",
+            reason="evaluation_to_feedback_mapping",
+            context={
+                "execution_id": feedback_signal.execution_id,
+                "score": feedback_signal.score,
+                "success": feedback_signal.success,
+                "failure_type": feedback_signal.failure_type,
+                "improvement_suggestions": list(feedback_signal.improvement_suggestions),
+                "confidence": feedback_signal.confidence,
+                "timestamp": feedback_signal.timestamp.isoformat(),
+            },
+        )
+
+        if not feedback_signal.success and feedback_signal.failure_type:
+            self._memory.log_failure(
+                source="feedback_engine",
+                error=feedback_signal.failure_type,
+                context={
+                    "execution_id": feedback_signal.execution_id,
+                    "score": feedback_signal.score,
+                    "suggestions": list(feedback_signal.improvement_suggestions),
+                },
+            )
 
     def _reflect_step(
         self,
@@ -224,6 +302,8 @@ class AgentLoop:
         goal: str,
         plan,
         metrics: dict[str, Any],
+        evaluation_result: EvaluationResult,
+        feedback_signal: FeedbackSignal,
         status: str,
         resolved_adaptation_count: int,
     ) -> ReflectionResult:
@@ -232,6 +312,8 @@ class AgentLoop:
             goal,
             plan,
             metrics,
+            evaluation_result,
+            feedback_signal,
             reflection,
             status,
             resolved_adaptation_count=resolved_adaptation_count,
@@ -308,6 +390,8 @@ class AgentLoop:
         goal: str,
         plan,
         metrics: dict[str, Any],
+        evaluation_result: EvaluationResult,
+        feedback_signal: FeedbackSignal,
         reflection: ReflectionResult,
         status: str,
         resolved_adaptation_count: int,
@@ -339,6 +423,22 @@ class AgentLoop:
             metadata={
                 "source": "agent_loop",
                 "resolved_adaptations": resolved_adaptation_count,
+                "feedback": {
+                    "execution_id": feedback_signal.execution_id,
+                    "score": feedback_signal.score,
+                    "success": feedback_signal.success,
+                    "failure_type": feedback_signal.failure_type,
+                    "improvement_suggestions": list(feedback_signal.improvement_suggestions),
+                    "confidence": feedback_signal.confidence,
+                    "timestamp": feedback_signal.timestamp.isoformat(),
+                },
+                "evaluation": {
+                    "task_id": evaluation_result.task_id,
+                    "success": evaluation_result.success,
+                    "score": evaluation_result.score,
+                    "feedback": evaluation_result.feedback,
+                    "metrics": dict(evaluation_result.metrics),
+                },
             },
         )
 

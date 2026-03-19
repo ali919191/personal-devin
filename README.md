@@ -1503,3 +1503,40 @@ pytest tests/evaluation -v
 ### Dependencies
 
 - None external. All dependencies are part of the existing repository stack.
+
+---
+
+## Agent 20 — Feedback Loop Engine
+
+### What was built
+
+- Feedback system connecting execution and evaluation to adaptation.
+- New deterministic feedback package:
+  - `app/feedback/models.py` with `FeedbackSignal` and `FeedbackBatch`
+  - `app/feedback/engine.py` with deterministic feedback generation and batching
+- Agent loop integration that generates feedback after evaluation, then routes
+  structured feedback into adaptation inputs through memory decisions/failures.
+
+### Architecture decisions
+
+- Deterministic mapping from evaluation output to feedback signal.
+- Structured signals for downstream learning:
+  - execution ID
+  - normalized score
+  - success/failure classification
+  - stable improvement suggestions
+  - deterministic confidence and timestamp via injected clock
+- Feedback routing is explicit in the agent loop (no hidden side channels):
+  - `feedback_signal` decision record
+  - failure record when a classified failure exists
+
+### How to run
+
+```bash
+pytest tests/feedback
+```
+
+### Dependencies
+
+- Evaluation engine outputs (`app.evaluation.models.EvaluationResult`)
+- Execution records (`app.execution.models.ExecutionReport`)

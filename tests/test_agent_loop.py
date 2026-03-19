@@ -8,6 +8,7 @@ import pytest
 from app.agent.agent_loop import AgentLoop
 from app.agent.loop_state import LoopStatus, LoopStep
 from app.execution.models import ExecutionReport, ExecutionStatus, ExecutionTask
+from app.feedback.engine import FeedbackEngine
 from app.planning.models import ExecutionGroup, ExecutionPlan, PlanMetadata, TaskNode
 
 
@@ -194,3 +195,34 @@ def test_deterministic_clock_timestamps(build_execution_plan_mock, run_plan_mock
 
     assert state_timestamps == {"2024-01-01T00:00:00Z"}
     assert log_timestamps == {"2024-01-01T00:00:00Z"}
+
+
+@patch("app.agent.agent_loop.run_plan")
+@patch("app.agent.agent_loop.build_execution_plan")
+def test_feedback_stage_runs_and_routes_to_adaptation_inputs(
+    build_execution_plan_mock,
+    run_plan_mock,
+) -> None:
+    plan = make_plan(TaskNode(id="task-1", description="goal", dependencies=[]))
+    report = make_report([make_task("task-1", ExecutionStatus.FAILED)])
+    build_execution_plan_mock.return_value = plan
+    run_plan_mock.return_value = report
+
+    memory = MagicMock()
+    loop = AgentLoop(
+        memory_service=memory,
+        self_improvement_engine=MagicMock(),
+        feedback_engine=FeedbackEngine(now_fn=fixed_now),
+        now_fn=fixed_now,
+    )
+    result = loop.run("Goal")
+
+    assert result.status == "failure"
+    assert memory.log_decision.call_count >= 2
+    decisions = [
+        call.kwargs.get("decision")
+        for call in memory.log_decision.call_args_list
+        if "decision" in call.kwargs
+    ]
+    assert "feedback_signal" in decisions
+    assert memory.log_failure.call_count >= 1
