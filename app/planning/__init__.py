@@ -1,8 +1,10 @@
 """Planning module public surface.
 
-Only one public entry point is intentionally exported.
+Public entry points:
+- build_execution_plan(tasks)
+- plan(task, context=None)
 """
 
-from app.planning.planner import build_execution_plan
+from app.planning.planner import build_execution_plan, plan
 
-__all__ = ["build_execution_plan"]
+__all__ = ["build_execution_plan", "plan"]

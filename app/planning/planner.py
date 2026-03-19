@@ -4,6 +4,8 @@ This module intentionally exposes a single public entry point:
 `build_execution_plan(tasks: list[dict]) -> ExecutionPlan`.
 """
 
+from copy import deepcopy
+
 from pydantic import ValidationError
 
 from app.core.logger import get_logger
@@ -97,3 +99,53 @@ def build_execution_plan(tasks: list[dict]) -> ExecutionPlan:
 
     logger.info("build_execution_plan_completed", {"total_tasks": plan.metadata.total_tasks})
     return plan
+
+
+def plan(task: dict, context: dict | None = None) -> ExecutionPlan:
+    """Build a deterministic single-task plan with optional feedback context."""
+    if not isinstance(task, dict):
+        raise ValueError("task must be a dictionary")
+
+    normalized_task = deepcopy(task)
+    if context is None:
+        return build_execution_plan([normalized_task])
+
+    metadata = normalized_task.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+    metadata = dict(metadata)
+
+    repeated_failures = context.get("repeated_failures")
+    if isinstance(repeated_failures, list):
+        signatures = sorted(
+            {
+                str(item.get("signature"))
+                for item in repeated_failures
+                if isinstance(item, dict) and item.get("signature")
+            }
+        )
+        if signatures:
+            metadata["avoid_failure_signatures"] = signatures
+
+    success_strategies = context.get("success_strategies")
+    if isinstance(success_strategies, list):
+        strategies = [
+            str(item.get("strategy"))
+            for item in success_strategies
+            if isinstance(item, dict) and item.get("strategy")
+        ]
+        strategies = [strategy for strategy in strategies if strategy]
+        if strategies:
+            metadata["preferred_strategies"] = strategies
+
+    if metadata:
+        normalized_task["metadata"] = metadata
+
+    logger.info(
+        "planner_feedback_context_applied",
+        {
+            "task_id": str(normalized_task.get("id", "unknown")),
+            "context_keys": sorted(context.keys()),
+        },
+    )
+    return build_execution_plan([normalized_task])

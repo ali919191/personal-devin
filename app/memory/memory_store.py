@@ -1,6 +1,7 @@
 """Deterministic append-only file storage for memory records."""
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
 
@@ -48,6 +49,28 @@ class MemoryStore:
         )
         return data
 
+    def store_execution(self, record: dict) -> None:
+        """Store a unified execution record in the execution stream."""
+        self.append("execution", record)
+
+    def get_recent(self, limit: int) -> list[dict]:
+        """Return recent execution records sorted deterministically newest-first."""
+        execution_records = self.read_all("execution")
+        ordered = sorted(
+            execution_records,
+            key=self._execution_sort_key,
+            reverse=True,
+        )
+        return ordered[: max(limit, 0)]
+
+    def get_failures(self) -> list[dict]:
+        """Return execution records classified as failures."""
+        return [record for record in self.read_all("execution") if not self._is_success(record)]
+
+    def get_successes(self) -> list[dict]:
+        """Return execution records classified as successes."""
+        return [record for record in self.read_all("execution") if self._is_success(record)]
+
     def _read_all_unlocked(self, memory_type: str) -> list[dict]:
         file_path = self._file_path(memory_type)
         if not file_path.exists():
@@ -71,6 +94,51 @@ class MemoryStore:
             path = self._file_path(memory_type)
             if not path.exists():
                 self._atomic_write(path, [])
+
+    def _execution_sort_key(self, payload: dict) -> tuple[datetime, str]:
+        timestamp = payload.get("timestamp")
+        parsed = self._parse_timestamp(timestamp)
+        memory_id = str(payload.get("id", ""))
+        return parsed, memory_id
+
+    def _parse_timestamp(self, raw_value: object) -> datetime:
+        if isinstance(raw_value, datetime):
+            if raw_value.tzinfo is None:
+                return raw_value.replace(tzinfo=UTC)
+            return raw_value.astimezone(UTC)
+        if isinstance(raw_value, str):
+            try:
+                parsed = datetime.fromisoformat(raw_value)
+                if parsed.tzinfo is None:
+                    return parsed.replace(tzinfo=UTC)
+                return parsed.astimezone(UTC)
+            except ValueError:
+                return datetime.min.replace(tzinfo=UTC)
+        return datetime.min.replace(tzinfo=UTC)
+
+    def _is_success(self, payload: dict) -> bool:
+        if isinstance(payload.get("success"), bool):
+            return bool(payload.get("success"))
+
+        status = str(payload.get("status", "")).lower()
+        if status in {"success", "completed"}:
+            return True
+        if status in {"failure", "failed", "error"}:
+            return False
+
+        data = payload.get("data")
+        if isinstance(data, dict):
+            data_status = str(data.get("status", "")).lower()
+            if data_status in {"success", "completed"}:
+                return True
+            if data_status in {"failure", "failed", "error"}:
+                return False
+
+            execution_record = data.get("execution_record")
+            if isinstance(execution_record, dict) and isinstance(execution_record.get("success"), bool):
+                return bool(execution_record.get("success"))
+
+        return False
 
     def _file_path(self, memory_type: str) -> Path:
         if memory_type not in _FILE_BY_TYPE:

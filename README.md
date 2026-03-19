@@ -758,6 +758,47 @@ from app.integrations.mock_api import MockAPITool
 api = MockAPITool()
 
 print(api.execute("GET", {"endpoint": "/users"}))
+
+---
+
+## Agent 18 — Memory Feedback Loop
+
+### What was built
+
+- Added a unified execution feedback model: `ExecutionRecord`.
+- Extended existing memory storage/service layers to persist and retrieve normalized execution outcomes.
+- Added a lightweight `FeedbackEngine` in memory that reuses the existing analysis `PatternDetector`.
+- Integrated feedback context into agent planning so historical failures and successful strategies influence task planning deterministically.
+- Kept the existing memory APIs intact (`log_execution`, `log_task`, `log_failure`, `log_decision`) for backward compatibility.
+
+### How memory now integrates with planning
+
+1. Before planning, the agent loop calls `MemoryService.get_feedback_context(task_id)`.
+2. `MemoryService` loads recent execution history via existing repository/store layers.
+3. `FeedbackEngine.build_context(...)` detects repeated failures and success strategies using `PatternDetector`.
+4. Planner entrypoint `plan(task, context=None)` deterministically injects context-derived metadata into the task.
+5. After execution, `MemoryService.record_execution(...)` persists unified execution outcomes.
+
+### Deterministic guarantees
+
+- No randomness introduced in context generation, sorting, or task adjustment.
+- Context outputs are generated from deterministic counters and stable sorting.
+- Planner behavior remains unchanged when `context` is `None`.
+- Existing planning and memory contracts remain backward compatible.
+
+### How to run tests
+
+Run all tests:
+
+```bash
+python -m pytest tests/ -v
+```
+
+Run Agent 18 specific tests:
+
+```bash
+python -m pytest tests/memory/test_feedback_engine.py tests/memory/test_memory_feedback_integration.py -v
+```
 print(api.execute("POST", {"endpoint": "/users", "data": {"id": 1}}))
 
 Must return deterministic responses.

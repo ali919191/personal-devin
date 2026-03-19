@@ -17,6 +17,19 @@ class MemoryRecord(BaseModel):
     data: dict = Field(default_factory=dict)
 
 
+class ExecutionRecord(BaseModel):
+    """Unified execution feedback record used by the memory feedback loop."""
+
+    task_id: str = Field(..., min_length=1)
+    input: dict = Field(default_factory=dict)
+    plan: dict = Field(default_factory=dict)
+    result: dict = Field(default_factory=dict)
+    success: bool = False
+    errors: list[str] = Field(default_factory=list)
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    metadata: dict = Field(default_factory=dict)
+
+
 class ExecutionMemory(MemoryRecord):
     """Execution-level memory entry."""
 
