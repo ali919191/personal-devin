@@ -559,6 +559,7 @@ class TestClosedLoopManualInjection:
         result2 = loop.run("manual closed loop task", injected_adaptation=adaptation)
 
         assert adaptation != []
+        assert result2.applied_modifiers != result1.applied_modifiers
         assert result2.applied_modifiers != {}
         assert result2 != result1
 
