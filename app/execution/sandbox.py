@@ -29,7 +29,31 @@ _BUILTINS_LOCK = threading.RLock()
 
 
 class ExecutionSandbox:
-    """Executes task handlers with restricted builtins and imports."""
+    """
+    ExecutionSandbox
+
+    This is a CONTROLLED EXECUTION LAYER, not a security sandbox.
+
+    Guarantees:
+    - Restricts builtins to a safe subset
+    - Restricts imports via allowlist
+    - Prevents accidental global leakage
+    - Ensures deterministic execution
+
+    Non-guarantees:
+    - Does NOT provide OS-level isolation
+    - Does NOT prevent malicious Python escape techniques
+    - Does NOT protect against low-level exploits
+
+    Design Intent:
+    - Enforce predictable, auditable execution
+    - Serve as a foundation for policy + observability layers
+
+    Future extensions (Agent 30+):
+    - Execution policies
+    - Audit logging
+    - Time/resource limits
+    """
 
     def execute(
         self,
