@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Callable
 
 from app.agent.agent_loop import AgentLoop
@@ -19,10 +20,11 @@ class OrchestrationRegistry:
 
 def create_default_registry() -> OrchestrationRegistry:
     memory = MemoryService()
+    deterministic_now = lambda: datetime(2000, 1, 1, tzinfo=UTC)
     return OrchestrationRegistry(
         planning_engine=build_execution_plan,
         execution_engine=run_plan,
         memory_system=memory,
-        agent_loop=AgentLoop(memory_service=memory),
+        agent_loop=AgentLoop(memory_service=memory, now_fn=deterministic_now),
         improvement_engine=ImprovementEngine(),
     )

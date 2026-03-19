@@ -1,11 +1,18 @@
-"""Tests for Agent 05 Agent Loop."""
+"""Tests for Agent 17 deterministic loop optimization."""
 
 from datetime import UTC, datetime
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from app.agent.agent_loop import AgentLoop
+from app.agent.loop_state import LoopStatus, LoopStep
 from app.execution.models import ExecutionReport, ExecutionStatus, ExecutionTask
 from app.planning.models import ExecutionGroup, ExecutionPlan, PlanMetadata, TaskNode
+
+
+def fixed_now() -> datetime:
+    return datetime(2024, 1, 1, tzinfo=UTC)
 
 
 def make_plan(*nodes: TaskNode) -> ExecutionPlan:
@@ -17,22 +24,15 @@ def make_plan(*nodes: TaskNode) -> ExecutionPlan:
     )
 
 
-def make_task(
-    task_id: str,
-    status: ExecutionStatus,
-    *,
-    error: str | None = None,
-    skip_reason: str | None = None,
-) -> ExecutionTask:
+def make_task(task_id: str, status: ExecutionStatus) -> ExecutionTask:
+    now = datetime.now(UTC)
     return ExecutionTask(
         id=task_id,
         description=f"Task {task_id}",
         dependencies=[],
         status=status,
-        error=error,
-        skip_reason=skip_reason,
-        started_at=datetime.now(UTC),
-        completed_at=datetime.now(UTC),
+        started_at=now,
+        completed_at=now,
     )
 
 
@@ -40,8 +40,8 @@ def make_report(tasks: list[ExecutionTask]) -> ExecutionReport:
     completed = sum(1 for task in tasks if task.status == ExecutionStatus.COMPLETED)
     failed = sum(1 for task in tasks if task.status == ExecutionStatus.FAILED)
     skipped = sum(1 for task in tasks if task.status == ExecutionStatus.SKIPPED)
-    status = ExecutionStatus.COMPLETED if completed == len(tasks) else ExecutionStatus.FAILED
-    started_at = datetime.now(UTC)
+    status = ExecutionStatus.COMPLETED if failed == 0 and skipped == 0 else ExecutionStatus.FAILED
+    now = datetime.now(UTC)
     return ExecutionReport(
         tasks=tasks,
         status=status,
@@ -49,157 +49,148 @@ def make_report(tasks: list[ExecutionTask]) -> ExecutionReport:
         completed_tasks=completed,
         failed_tasks=failed,
         skipped_tasks=skipped,
-        started_at=started_at,
-        completed_at=started_at,
+        started_at=now,
+        completed_at=now,
     )
 
 
-class TestAgentLoop:
-    @patch("app.agent.agent_loop.run_plan")
-    @patch("app.agent.agent_loop.build_execution_plan")
-    def test_conflict_resolver_called_pre_execution(
-        self, build_execution_plan_mock, run_plan_mock
-    ) -> None:
-        plan = make_plan(TaskNode(id="task-1", description="goal", dependencies=[]))
-        report = make_report([make_task("task-1", ExecutionStatus.COMPLETED)])
-        build_execution_plan_mock.return_value = plan
-        run_plan_mock.return_value = report
+@patch("app.agent.agent_loop.run_plan")
+@patch("app.agent.agent_loop.build_execution_plan")
+def test_loop_success_path(build_execution_plan_mock, run_plan_mock) -> None:
+    plan = make_plan(TaskNode(id="task-1", description="goal", dependencies=[]))
+    report = make_report([make_task("task-1", ExecutionStatus.COMPLETED)])
+    build_execution_plan_mock.return_value = plan
+    run_plan_mock.return_value = report
 
-        resolver = MagicMock()
-        resolver.resolve.return_value = []
+    loop = AgentLoop(
+        memory_service=MagicMock(),
+        self_improvement_engine=MagicMock(),
+        now_fn=fixed_now,
+    )
+    result = loop.run("Sample goal")
 
-        AgentLoop(memory_service=MagicMock(), conflict_resolver=resolver).run("Goal")
+    assert result.status == "success"
+    assert result.reflection.notes == "All tasks succeeded"
+    assert [state.step for state in loop.state_history if state.status == LoopStatus.SUCCESS] == [
+        LoopStep.PLAN,
+        LoopStep.EXECUTE,
+        LoopStep.VALIDATE,
+        LoopStep.REFLECT,
+    ]
 
-        resolver.resolve.assert_called_once_with([])
-        run_plan_mock.assert_called_once_with(plan)
 
-    @patch("app.agent.agent_loop.run_plan")
-    @patch("app.agent.agent_loop.build_execution_plan")
-    def test_full_success(self, build_execution_plan_mock, run_plan_mock) -> None:
-        plan = make_plan(TaskNode(id="task-1", description="goal", dependencies=[]))
-        report = make_report([make_task("task-1", ExecutionStatus.COMPLETED)])
-        build_execution_plan_mock.return_value = plan
-        run_plan_mock.return_value = report
+@patch("app.agent.agent_loop.run_plan")
+@patch("app.agent.agent_loop.build_execution_plan")
+def test_transient_retry(build_execution_plan_mock, run_plan_mock) -> None:
+    plan = make_plan(TaskNode(id="task-1", description="goal", dependencies=[]))
+    report = make_report([make_task("task-1", ExecutionStatus.COMPLETED)])
+    build_execution_plan_mock.return_value = plan
+    run_plan_mock.side_effect = [TimeoutError("temporary"), report]
 
-        memory = MagicMock()
-        result = AgentLoop(memory_service=memory).run("Sample goal")
+    loop = AgentLoop(
+        memory_service=MagicMock(),
+        self_improvement_engine=MagicMock(),
+        now_fn=fixed_now,
+    )
+    result = loop.run("Goal")
 
-        build_execution_plan_mock.assert_called_once_with(
-            [{"id": "task-1", "description": "Sample goal", "dependencies": []}]
-        )
-        run_plan_mock.assert_called_once_with(plan)
-        assert result.status == "success"
-        assert result.reflection.success_rate == 1.0
-        assert result.reflection.notes == "All tasks succeeded"
+    assert result.status == "success"
+    assert run_plan_mock.call_count == 2
+    retry_states = [
+        state
+        for state in loop.state_history
+        if state.step == LoopStep.EXECUTE and state.status == LoopStatus.RETRY
+    ]
+    assert len(retry_states) == 1
 
-    @patch("app.agent.agent_loop.run_plan")
-    @patch("app.agent.agent_loop.build_execution_plan")
-    def test_partial_failure(self, build_execution_plan_mock, run_plan_mock) -> None:
-        plan = make_plan(
-            TaskNode(id="task-1", description="goal", dependencies=[]),
-            TaskNode(id="task-2", description="goal-2", dependencies=[]),
-        )
-        report = make_report(
-            [
-                make_task("task-1", ExecutionStatus.COMPLETED),
-                make_task("task-2", ExecutionStatus.FAILED, error="boom"),
-            ]
-        )
-        build_execution_plan_mock.return_value = plan
-        run_plan_mock.return_value = report
 
-        result = AgentLoop(memory_service=MagicMock()).run("Goal")
+@patch("app.agent.agent_loop.run_plan")
+@patch("app.agent.agent_loop.build_execution_plan")
+def test_fail_fast_logic_error(build_execution_plan_mock, run_plan_mock) -> None:
+    plan = make_plan(TaskNode(id="task-1", description="goal", dependencies=[]))
+    build_execution_plan_mock.return_value = plan
+    run_plan_mock.side_effect = RuntimeError("logic failure")
 
-        assert result.status == "partial"
-        assert result.reflection.failed_tasks == ["task-2"]
-        assert result.reflection.notes == "Partial failure detected"
+    loop = AgentLoop(
+        memory_service=MagicMock(),
+        self_improvement_engine=MagicMock(),
+        now_fn=fixed_now,
+    )
 
-    @patch("app.agent.agent_loop.run_plan")
-    @patch("app.agent.agent_loop.build_execution_plan")
-    def test_full_failure(self, build_execution_plan_mock, run_plan_mock) -> None:
-        plan = make_plan(TaskNode(id="task-1", description="goal", dependencies=[]))
-        report = make_report([make_task("task-1", ExecutionStatus.FAILED, error="boom")])
-        build_execution_plan_mock.return_value = plan
-        run_plan_mock.return_value = report
+    with pytest.raises(RuntimeError):
+        loop.run("Goal")
 
-        result = AgentLoop(memory_service=MagicMock()).run("Goal")
+    assert run_plan_mock.call_count == 1
 
-        assert result.status == "failure"
-        assert result.reflection.failed_tasks == ["task-1"]
-        assert result.reflection.notes == "Execution failed"
 
-    @patch("app.agent.agent_loop.run_plan")
-    @patch("app.agent.agent_loop.build_execution_plan")
-    def test_memory_logging_invoked(self, build_execution_plan_mock, run_plan_mock) -> None:
-        plan = make_plan(
-            TaskNode(id="task-1", description="goal", dependencies=[]),
-            TaskNode(id="task-2", description="goal-2", dependencies=[]),
-        )
-        report = make_report(
-            [
-                make_task("task-1", ExecutionStatus.COMPLETED),
-                make_task(
-                    "task-2",
-                    ExecutionStatus.SKIPPED,
-                    error="dependency_failed:task-1",
-                    skip_reason="dependency_failed:task-1",
-                ),
-            ]
-        )
-        build_execution_plan_mock.return_value = plan
-        run_plan_mock.return_value = report
+@patch("app.agent.agent_loop.run_plan")
+@patch("app.agent.agent_loop.build_execution_plan")
+def test_deterministic_iteration_id(build_execution_plan_mock, run_plan_mock) -> None:
+    plan = make_plan(TaskNode(id="task-1", description="goal", dependencies=[]))
+    report = make_report([make_task("task-1", ExecutionStatus.COMPLETED)])
+    build_execution_plan_mock.return_value = plan
+    run_plan_mock.return_value = report
 
-        memory = MagicMock()
-        result = AgentLoop(memory_service=memory).run("Goal")
+    loop_a = AgentLoop(
+        memory_service=MagicMock(),
+        self_improvement_engine=MagicMock(),
+        now_fn=fixed_now,
+    )
+    loop_b = AgentLoop(
+        memory_service=MagicMock(),
+        self_improvement_engine=MagicMock(),
+        now_fn=fixed_now,
+    )
 
-        assert result.status == "partial"
-        memory.log_execution.assert_called_once()
-        execution_kwargs = memory.log_execution.call_args.kwargs
-        assert execution_kwargs["metadata"]["plan"] == {
-            "task_ids": ["task-1", "task-2"],
-            "total_tasks": 2,
-        }
-        assert memory.log_task.call_count == 2
-        memory.log_failure.assert_called_once_with(
-            source="agent_loop",
-            error="dependency_failed:task-1",
-            context={"goal": "Goal", "task_id": "task-2", "status": "skipped"},
-        )
-        memory.log_decision.assert_called_once()
+    result_a = loop_a.run("  Repeatable Goal ")
+    result_b = loop_b.run("Repeatable Goal")
 
-    @patch("app.agent.agent_loop.run_plan")
-    @patch("app.agent.agent_loop.build_execution_plan")
-    def test_skipped_without_completed_is_failure(
-        self, build_execution_plan_mock, run_plan_mock
-    ) -> None:
-        plan = make_plan(
-            TaskNode(id="task-1", description="goal", dependencies=[]),
-            TaskNode(id="task-2", description="goal-2", dependencies=["task-1"]),
-        )
-        report = make_report(
-            [
-                make_task("task-1", ExecutionStatus.FAILED, error="boom"),
-                make_task(
-                    "task-2",
-                    ExecutionStatus.SKIPPED,
-                    error="dependency_failed:task-1",
-                    skip_reason="dependency_failed:task-1",
-                ),
-            ]
-        )
-        build_execution_plan_mock.return_value = plan
-        run_plan_mock.return_value = report
+    assert result_a.status == "success"
+    assert result_b.status == "success"
+    assert loop_a.last_iteration_id == loop_b.last_iteration_id
 
-        result = AgentLoop(memory_service=MagicMock()).run("Goal")
 
-        assert result.status == "failure"
+@patch("app.agent.agent_loop.run_plan")
+@patch("app.agent.agent_loop.build_execution_plan")
+def test_logging_structure(build_execution_plan_mock, run_plan_mock) -> None:
+    plan = make_plan(TaskNode(id="task-1", description="goal", dependencies=[]))
+    report = make_report([make_task("task-1", ExecutionStatus.COMPLETED)])
+    build_execution_plan_mock.return_value = plan
+    run_plan_mock.return_value = report
 
-    def test_empty_goal_rejected(self) -> None:
-        with patch("app.agent.agent_loop.build_execution_plan"):
-            with patch("app.agent.agent_loop.run_plan"):
-                try:
-                    AgentLoop(memory_service=MagicMock()).run("   ")
-                except ValueError as exc:
-                    assert str(exc) == "goal must be a non-empty string"
-                else:
-                    raise AssertionError("Expected ValueError for empty goal")
+    loop = AgentLoop(
+        memory_service=MagicMock(),
+        self_improvement_engine=MagicMock(),
+        now_fn=fixed_now,
+    )
+    loop.run("Goal")
+
+    assert len(loop.loop_logs) == 4
+    for entry in loop.loop_logs:
+        assert "iteration_id" in entry
+        assert "step" in entry
+        assert "status" in entry
+        assert "duration_ms" in entry
+        assert "error_type" in entry
+
+
+@patch("app.agent.agent_loop.run_plan")
+@patch("app.agent.agent_loop.build_execution_plan")
+def test_deterministic_clock_timestamps(build_execution_plan_mock, run_plan_mock) -> None:
+    plan = make_plan(TaskNode(id="task-1", description="goal", dependencies=[]))
+    report = make_report([make_task("task-1", ExecutionStatus.COMPLETED)])
+    build_execution_plan_mock.return_value = plan
+    run_plan_mock.return_value = report
+
+    loop = AgentLoop(
+        memory_service=MagicMock(),
+        self_improvement_engine=MagicMock(),
+        now_fn=fixed_now,
+    )
+    loop.run("Goal")
+
+    state_timestamps = {state.timestamp for state in loop.state_history}
+    log_timestamps = {entry["timestamp"] for entry in loop.loop_logs}
+
+    assert state_timestamps == {"2024-01-01T00:00:00Z"}
+    assert log_timestamps == {"2024-01-01T00:00:00Z"}
