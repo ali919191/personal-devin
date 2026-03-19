@@ -1633,3 +1633,44 @@ pytest -q
 
 ### Dependencies
 - Pydantic (for validation)
+
+## Agent 24 — Deployment Orchestrator
+
+### What was built
+- Added a strict deployment input contract in [app/core/deployment_context.py](app/core/deployment_context.py) using an immutable dataclass (`frozen=True`) with deterministic normalization.
+- Added typed deployment planning models in [app/deployment/models.py](app/deployment/models.py): `DeploymentStep` and `DeploymentPlan`.
+- Added a pure deployment planner in [app/deployment/orchestrator.py](app/deployment/orchestrator.py) that converts execution-derived context into explicit simulation steps.
+- Added deployment package exports in [app/deployment/__init__.py](app/deployment/__init__.py).
+- Added unit tests in [tests/deployment/test_orchestrator.py](tests/deployment/test_orchestrator.py).
+
+### Architecture decisions
+- Deterministic-first design:
+  - Services are normalized and sorted in `DeploymentContext`.
+  - Nested dictionaries/lists are canonicalized for stable ordering.
+  - Step IDs and indexes are deterministic (`step-001`, `step-002`, ...).
+- Strict structure enforcement:
+  - `DeploymentOrchestrator.generate_plan(...)` only accepts `DeploymentContext`.
+  - Raw dictionaries are rejected with explicit `TypeError`.
+- Simulation-only behavior:
+  - No provider SDK usage.
+  - No external API/network calls.
+  - No real deployment side effects.
+- Structured observability:
+  - Logs input context, generated plan, and step count using project structured logger.
+
+### How to run
+Run deployment tests only:
+
+```bash
+pytest tests/deployment/test_orchestrator.py -q
+```
+
+Run full suite:
+
+```bash
+pytest
+```
+
+### Dependencies
+- No new third-party dependencies added.
+- Reuses existing project dependencies and shared logging utilities.

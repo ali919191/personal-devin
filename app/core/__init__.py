@@ -1,5 +1,6 @@
 """Core module."""
 
+from app.core.deployment_context import DeploymentContext
 from app.core.logger import StructuredLogger, get_logger
 from app.core.recovery import (
 	DeterministicFailureError,
@@ -23,6 +24,7 @@ from app.core.state import (
 __all__ = [
 	"StructuredLogger",
 	"get_logger",
+	"DeploymentContext",
 	"SystemState",
 	"StateTransition",
 	"SystemStateSnapshot",
