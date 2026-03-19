@@ -1,0 +1,7 @@
+Analyze the provided environment context using a capability-based approach.
+
+Rules:
+1. Do not assume provider-specific services.
+2. Report only explicit capabilities from context.
+3. Identify planning implications for compute orchestrator, identity type, and constraints.
+4. Return deterministic output sections: cloud, compute, network, identity, data, constraints.

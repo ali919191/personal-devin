@@ -1613,3 +1613,23 @@ pytest -q
 - No new third-party dependencies were added.
 - Uses the Python standard library for shell and HTTP execution.
 - Reuses the existing project dependencies listed in `requirements.txt`, including Pydantic for typed models.
+
+## Agent 22 — Environment & Context Engine
+
+### What was built
+- Universal environment context system
+- Provider-agnostic schema
+- Deterministic validation layer
+
+### Architecture decisions
+- Capability-based modeling instead of vendor coupling
+- Adapter pattern for future extensibility
+- Strict validation (fail-fast)
+
+### How to run
+- Define environment config
+- Load via context service
+- Run planning/execution with context injected
+
+### Dependencies
+- Pydantic (for validation)

@@ -5,9 +5,12 @@ This module intentionally exposes a single public entry point:
 """
 
 from copy import deepcopy
+from typing import Any
 
 from pydantic import ValidationError
 
+from app.context.models import EnvironmentContext
+from app.context.service import EnvironmentContextService
 from app.core.logger import get_logger
 from app.planning.graph import DependencyGraph, PlanningCycleError
 from app.planning.models import ExecutionGroup, ExecutionPlan, PlanMetadata, TaskNode
@@ -71,7 +74,54 @@ def _normalize_tasks(raw_tasks: list[dict]) -> list[TaskNode]:
     return normalized
 
 
-def build_execution_plan(tasks: list[dict]) -> ExecutionPlan:
+def _resolve_environment_context(
+    environment_context: dict[str, Any] | EnvironmentContext,
+) -> tuple[EnvironmentContext, dict[str, Any]]:
+    """Resolve typed environment context and deterministic planning projection."""
+    if isinstance(environment_context, EnvironmentContext):
+        context = environment_context
+        service = EnvironmentContextService()
+        service.load_from_payload(context.model_dump())
+        projection = service.get_planning_context()
+        return context, projection
+
+    service = EnvironmentContextService()
+    context = service.load_from_payload(environment_context)
+    projection = service.get_planning_context()
+    return context, projection
+
+
+def _apply_environment_context_to_tasks(
+    tasks: list[dict],
+    environment_context: dict[str, Any] | EnvironmentContext,
+) -> list[dict]:
+    """Inject deterministic environment metadata into planning inputs."""
+    _, planning_projection = _resolve_environment_context(environment_context)
+    normalized_tasks: list[dict] = []
+
+    for task in tasks:
+        copied = deepcopy(task)
+        metadata = copied.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+        metadata = dict(metadata)
+
+        metadata["environment"] = dict(planning_projection)
+        metadata["required_compute_orchestrator"] = planning_projection[
+            "compute_orchestrator"
+        ]
+        metadata["required_identity_type"] = planning_projection["identity_type"]
+        metadata["required_compliance"] = list(planning_projection["compliance"])
+        copied["metadata"] = metadata
+        normalized_tasks.append(copied)
+
+    return normalized_tasks
+
+
+def build_execution_plan(
+    tasks: list[dict],
+    environment_context: dict[str, Any] | EnvironmentContext | None = None,
+) -> ExecutionPlan:
     """Build a deterministic execution plan from a list of task dictionaries.
 
     Input contract:
@@ -86,7 +136,16 @@ def build_execution_plan(tasks: list[dict]) -> ExecutionPlan:
         ValueError: For malformed input, duplicate IDs, or unknown dependencies.
         PlanningCycleError: If the dependency graph contains a cycle.
     """
-    logger.info("build_execution_plan_started", {"raw_task_count": len(tasks)})
+    if environment_context is not None:
+        tasks = _apply_environment_context_to_tasks(tasks, environment_context)
+
+    logger.info(
+        "build_execution_plan_started",
+        {
+            "raw_task_count": len(tasks),
+            "environment_context_provided": environment_context is not None,
+        },
+    )
 
     nodes = _normalize_tasks(tasks)
     engine = _PlanningEngine()

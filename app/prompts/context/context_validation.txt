@@ -1,0 +1,7 @@
+Validate the environment context strictly.
+
+Validation directives:
+1. Missing required fields must raise MissingEnvironmentContextError.
+2. Invalid structure or enum values must raise InvalidEnvironmentConfigurationError.
+3. No defaulting, no inference, no silent correction.
+4. Emit explicit list of incompatible requirements when validating execution metadata.

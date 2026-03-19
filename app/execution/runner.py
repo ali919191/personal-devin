@@ -2,7 +2,11 @@
 
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
+from app.context.models import EnvironmentContext
+from app.context.service import EnvironmentContextService
+from app.context.validator import EnvironmentContextValidator
 from app.execution.executor import Executor, TaskHandler
 from app.execution.logger import get_execution_logger
 from app.execution.models import ExecutionReport, ExecutionStatus, ExecutionTask
@@ -39,11 +43,29 @@ class Runner:
         """Initialise the runner with an Executor instance."""
         self._executor = Executor()
         self.stop_on_failure = stop_on_failure
+        self._context_validator = EnvironmentContextValidator()
+
+    def _validate_environment_context(
+        self,
+        plan: ExecutionPlan,
+        environment_context: dict[str, Any] | EnvironmentContext | None,
+    ) -> None:
+        if environment_context is None:
+            return
+
+        if isinstance(environment_context, EnvironmentContext):
+            context = environment_context
+        else:
+            service = EnvironmentContextService()
+            context = service.load_from_payload(environment_context)
+
+        self._context_validator.validate_plan_compatibility(plan, context)
 
     def run(
         self,
         plan: ExecutionPlan,
         handlers: dict[str, TaskHandler] | None = None,
+        environment_context: dict[str, Any] | EnvironmentContext | None = None,
     ) -> ExecutionReport:
         """Execute all tasks in *plan* in their topological order.
 
@@ -59,6 +81,7 @@ class Runner:
         Returns:
             ExecutionReport summarising the outcome of every task.
         """
+        self._validate_environment_context(plan, environment_context)
         handlers = handlers or {}
         started_at = datetime.now(UTC)
         _logger.log_run_started(plan.metadata.total_tasks)
@@ -159,6 +182,7 @@ def run_plan(
     plan: ExecutionPlan,
     handlers: dict[str, TaskHandler] | None = None,
     stop_on_failure: bool = True,
+    environment_context: dict[str, Any] | EnvironmentContext | None = None,
 ) -> ExecutionReport:
     """Convenience function: create a Runner and execute a plan in one call.
 
@@ -178,4 +202,8 @@ def run_plan(
         print(report.completed_tasks)  # 2
     """
     runner = Runner(stop_on_failure=stop_on_failure)
-    return runner.run(plan, handlers=handlers)
+    return runner.run(
+        plan,
+        handlers=handlers,
+        environment_context=environment_context,
+    )
