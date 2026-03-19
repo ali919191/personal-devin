@@ -1,6 +1,17 @@
+"""Deprecated compatibility orchestrator.
+
+Canonical orchestration ownership moved to app.core.orchestrator in Agent 16.
+This module remains as a compatibility layer for existing imports.
+"""
+
+# TODO (Agent 18):
+# Remove this module entirely.
+# All consumers must migrate to app.core.Orchestrator.
+
 from __future__ import annotations
 
 from typing import Any
+import warnings
 
 from app.core.logger import get_logger
 from app.orchestration.models import OrchestrationRequest, OrchestrationResult, RunContext, TraceEntry
@@ -11,6 +22,12 @@ logger = get_logger(__name__)
 
 class Orchestrator:
     def __init__(self, registry: OrchestrationRegistry | None = None) -> None:
+        warnings.warn(
+            "app.orchestration.orchestrator is deprecated and will be removed in Agent 18. "
+            "Use app.core.Orchestrator instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._registry = registry or create_default_registry()
 
     def run(self, request: OrchestrationRequest) -> OrchestrationResult:

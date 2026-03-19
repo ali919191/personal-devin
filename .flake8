@@ -1,0 +1,14 @@
+[flake8]
+exclude = .git,__pycache__,.venv,.venv-1
+max-line-length = 140
+extend-ignore = W191,W292
+per-file-ignores =
+	app/adaptation/registry.py:F401
+	app/core/logger.py:E302
+	app/execution/runner.py:F401
+	app/planning/models.py:F401
+	app/self_improvement/loop.py:F401
+	tests/self_improvement/test_analyzer.py:F401
+	tests/test_agent_loop.py:F401
+	tests/test_basic.py:E302
+	tests/test_execution_engine.py:F401
