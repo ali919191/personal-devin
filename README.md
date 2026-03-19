@@ -1674,3 +1674,31 @@ pytest
 ### Dependencies
 - No new third-party dependencies added.
 - Reuses existing project dependencies and shared logging utilities.
+
+## Agent 25 — Infrastructure Abstraction Layer
+
+### What was built
+- Added a provider abstraction contract at `app/infrastructure/base.py` via `InfrastructureProvider` with typed `deploy`, `destroy`, and `status` methods.
+- Added deterministic provider resolution at `app/infrastructure/factory.py` with `get_provider(env: str)`.
+- Added pluggable infrastructure providers in `app/infrastructure/providers/`:
+  - `local.py`: local execution simulation, no external dependencies.
+  - `aks.py`: AKS behavior simulation stub only (no Azure SDK usage).
+  - `mock.py`: fully static deterministic responses for unit tests.
+- Refactored execution integration in `app/execution/runner.py` to resolve infrastructure providers through the factory and call `provider.deploy(context)` when an infrastructure context is supplied.
+- Added infrastructure tests in `tests/infrastructure/test_factory.py` and `tests/infrastructure/test_providers.py`.
+
+### Architecture decisions
+- Provider pattern with an abstract contract keeps execution layer environment-agnostic.
+- Deterministic factory map avoids dynamic imports and runtime side effects.
+- Provider outputs are typed and deterministic (`InfrastructureResult`), enabling predictable tests.
+- Environment-specific selection is centralized in the factory; no environment branching in execution.
+
+### How to run
+- Run full test suite:
+  - `python -m pytest`
+- Run only infrastructure tests:
+  - `python -m pytest tests/infrastructure/test_factory.py tests/infrastructure/test_providers.py`
+
+### Dependencies
+- No new external infrastructure SDK dependencies added.
+- Uses existing project dependencies from `requirements.txt` (`pytest`, `pydantic`).

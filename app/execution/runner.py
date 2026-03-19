@@ -1,6 +1,6 @@
 """Execution orchestrator: iterates plan steps, calls executor, logs and reports."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -10,6 +10,7 @@ from app.context.validator import EnvironmentContextValidator
 from app.execution.executor import Executor, TaskHandler
 from app.execution.logger import get_execution_logger
 from app.execution.models import ExecutionReport, ExecutionStatus, ExecutionTask
+from app.infrastructure.factory import get_provider
 from app.planning.models import ExecutionPlan, TaskNode
 
 _logger = get_execution_logger(__name__)
@@ -61,11 +62,33 @@ class Runner:
 
         self._context_validator.validate_plan_compatibility(plan, context)
 
+    def _resolve_infrastructure_environment(self, context: Any) -> str | None:
+        if isinstance(context, Mapping):
+            value = context.get("environment")
+        else:
+            value = getattr(context, "environment", None)
+
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return None
+
+    def _deploy_infrastructure(self, context: Any | None) -> None:
+        if context is None:
+            return
+
+        environment = self._resolve_infrastructure_environment(context)
+        if environment is None:
+            return
+
+        provider = get_provider(environment)
+        provider.deploy(context)
+
     def run(
         self,
         plan: ExecutionPlan,
         handlers: dict[str, TaskHandler] | None = None,
         environment_context: dict[str, Any] | EnvironmentContext | None = None,
+        infrastructure_context: Any | None = None,
     ) -> ExecutionReport:
         """Execute all tasks in *plan* in their topological order.
 
@@ -82,6 +105,8 @@ class Runner:
             ExecutionReport summarising the outcome of every task.
         """
         self._validate_environment_context(plan, environment_context)
+        context = infrastructure_context if infrastructure_context is not None else environment_context
+        self._deploy_infrastructure(context)
         handlers = handlers or {}
         started_at = datetime.now(UTC)
         _logger.log_run_started(plan.metadata.total_tasks)
@@ -183,6 +208,7 @@ def run_plan(
     handlers: dict[str, TaskHandler] | None = None,
     stop_on_failure: bool = True,
     environment_context: dict[str, Any] | EnvironmentContext | None = None,
+    infrastructure_context: Any | None = None,
 ) -> ExecutionReport:
     """Convenience function: create a Runner and execute a plan in one call.
 
@@ -206,4 +232,5 @@ def run_plan(
         plan,
         handlers=handlers,
         environment_context=environment_context,
+        infrastructure_context=infrastructure_context,
     )
