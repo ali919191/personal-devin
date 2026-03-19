@@ -10,6 +10,7 @@ from app.self_improvement.logger import (
     IMPROVEMENTS_APPROVED,
     OPTIMIZATION_GENERATED,
     POLICY_FILTER_APPLIED,
+    SELF_IMPROVEMENT_COMPLETED,
     SELF_IMPROVEMENT_STARTED,
     log_event,
 )
@@ -61,8 +62,25 @@ class SelfImprovementEngine:
         )
         log_event(IMPROVEMENTS_APPROVED, {"approved_count": len(approved)})
 
+        self._persist_improvements(memory_store, approved)
+
+        log_event(
+            SELF_IMPROVEMENT_COMPLETED,
+            {
+                "approved": len(approved),
+                "rejected": len(generated) - len(approved),
+            },
+        )
+
         report = OptimizationReport(generated=generated, approved=approved)
         return list(report.approved)
+
+    def _persist_improvements(self, memory_store: Any, improvements: list[ImprovementAction]) -> None:
+        if hasattr(memory_store, "store_improvements"):
+            try:
+                memory_store.store_improvements(improvements)
+            except Exception:
+                pass
 
     def _load_history(self, memory_store: Any) -> list:
         if hasattr(memory_store, "get_recent"):

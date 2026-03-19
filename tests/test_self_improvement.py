@@ -108,3 +108,84 @@ def test_no_invalid_improvements() -> None:
     approved = engine.run(store)
 
     assert approved == []
+
+
+def test_empty_history_evaluates_defaults() -> None:
+    evaluation = Evaluator().evaluate([])
+
+    assert evaluation.success_rate == 1.0
+    assert evaluation.avg_latency == 0.0
+    assert evaluation.failure_patterns == []
+    assert evaluation.retry_patterns == []
+    assert evaluation.policy_violations == []
+
+
+def test_optimizer_no_actions_on_good_run() -> None:
+    evaluation = EvaluationResult(
+        success_rate=1.0,
+        avg_latency=0.5,
+        failure_patterns=[],
+        retry_patterns=[],
+        policy_violations=[],
+    )
+
+    actions = Optimizer().optimize(evaluation)
+
+    assert actions == []
+
+
+def test_policy_deduplicates_by_target() -> None:
+    actions = [
+        ImprovementAction(type="adjust_policy", target="retry_limit", value=3, confidence=0.85),
+        ImprovementAction(type="adjust_policy", target="retry_limit", value=2, confidence=0.75),
+        ImprovementAction(type="adjust_policy", target="retry_limit", value=5, confidence=0.80),
+    ]
+
+    approved = ImprovementPolicy(confidence_threshold=0.7).approve(actions)
+
+    assert len([a for a in approved if a.target == "retry_limit"]) == 1
+    assert approved[0].confidence == 0.85
+
+
+def test_evaluator_ignores_unknown_record_types() -> None:
+    records = [
+        {"type": "unknown", "data": {"status": "failure"}},
+        {"type": "execution", "data": {"status": "success", "latency": 1.0}},
+        {"type": "bogus", "data": {"error": "some error"}},
+    ]
+
+    evaluation = Evaluator().evaluate(records)
+
+    assert evaluation.success_rate == 1.0
+    assert evaluation.failure_patterns == []
+
+
+def test_policy_violations_trigger_guard_action() -> None:
+    evaluation = EvaluationResult(
+        success_rate=1.0,
+        avg_latency=0.5,
+        failure_patterns=[],
+        retry_patterns=[],
+        policy_violations=["policy_violation:violation:guard:1"],
+    )
+
+    actions = Optimizer().optimize(evaluation)
+
+    assert any(action.target == "policy_violation_guard" for action in actions)
+
+
+def test_engine_persists_improvements() -> None:
+    class CapturingStore(StubMemoryStore):
+        def __init__(self, records):
+            super().__init__(records)
+            self.persisted: list = []
+
+        def store_improvements(self, improvements: list) -> None:
+            self.persisted.extend(improvements)
+
+    store = CapturingStore(_sample_records())
+    engine = SelfImprovementEngine()
+
+    approved = engine.run(store)
+
+    assert store.persisted == approved

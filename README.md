@@ -1260,5 +1260,5 @@ pytest -q
 
 ### Dependencies
 
-- No new third-party dependencies beyond existing project requirements.
-- Reuses the project logger and memory service interfaces.
+- `pydantic` — required by planning, memory, and execution layers (added in prior agent builds, not new to Agent 14).
+- No new third-party packages introduced by this module.
