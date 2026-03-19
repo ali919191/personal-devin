@@ -10,6 +10,8 @@ from app.context.validator import EnvironmentContextValidator
 from app.execution.executor import Executor, TaskHandler
 from app.execution.logger import get_execution_logger
 from app.execution.models import ExecutionReport, ExecutionStatus, ExecutionTask
+from app.infrastructure.base import DefaultInfrastructureContext, InfrastructureContext
+from app.infrastructure.factory import get_provider
 from app.planning.models import ExecutionPlan, TaskNode
 
 _logger = get_execution_logger(__name__)
@@ -61,11 +63,24 @@ class Runner:
 
         self._context_validator.validate_plan_compatibility(plan, context)
 
+    def _deploy_infrastructure(
+        self,
+        infrastructure_context: InfrastructureContext | None,
+    ) -> None:
+        ctx: InfrastructureContext = (
+            infrastructure_context
+            if infrastructure_context is not None
+            else DefaultInfrastructureContext()
+        )
+        provider = get_provider(ctx.environment)
+        provider.deploy(ctx)
+
     def run(
         self,
         plan: ExecutionPlan,
         handlers: dict[str, TaskHandler] | None = None,
         environment_context: dict[str, Any] | EnvironmentContext | None = None,
+        infrastructure_context: InfrastructureContext | None = None,
     ) -> ExecutionReport:
         """Execute all tasks in *plan* in their topological order.
 
@@ -82,6 +97,7 @@ class Runner:
             ExecutionReport summarising the outcome of every task.
         """
         self._validate_environment_context(plan, environment_context)
+        self._deploy_infrastructure(infrastructure_context)
         handlers = handlers or {}
         started_at = datetime.now(UTC)
         _logger.log_run_started(plan.metadata.total_tasks)
@@ -183,6 +199,7 @@ def run_plan(
     handlers: dict[str, TaskHandler] | None = None,
     stop_on_failure: bool = True,
     environment_context: dict[str, Any] | EnvironmentContext | None = None,
+    infrastructure_context: InfrastructureContext | None = None,
 ) -> ExecutionReport:
     """Convenience function: create a Runner and execute a plan in one call.
 
@@ -206,4 +223,5 @@ def run_plan(
         plan,
         handlers=handlers,
         environment_context=environment_context,
+        infrastructure_context=infrastructure_context,
     )
