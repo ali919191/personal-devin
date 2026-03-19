@@ -3,7 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
+
+
+class ImprovementType(str, Enum):
+    """Controlled vocabulary for improvement action types."""
+
+    ADJUST_POLICY = "adjust_policy"
+    CHANGE_STRATEGY = "change_strategy"
+    INCREASE_CONFIDENCE = "increase_confidence"
 
 
 @dataclass(frozen=True)
@@ -21,7 +30,7 @@ class EvaluationResult:
 class ImprovementAction:
     """Improvement proposal produced from evaluated history."""
 
-    type: str
+    type: ImprovementType
     target: str
     value: Any
     confidence: float

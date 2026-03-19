@@ -2,7 +2,7 @@
 
 from app.self_improvement.engine import SelfImprovementEngine
 from app.self_improvement.evaluator import Evaluator
-from app.self_improvement.models import EvaluationResult, ImprovementAction
+from app.self_improvement.models import EvaluationResult, ImprovementAction, ImprovementType
 from app.self_improvement.optimizer import Optimizer
 from app.self_improvement.policy import ImprovementPolicy
 
@@ -64,24 +64,24 @@ def test_optimization_generation() -> None:
 
     assert actions
     assert all(isinstance(action, ImprovementAction) for action in actions)
-    assert any(action.type == "adjust_policy" for action in actions)
-    assert any(action.type == "change_strategy" for action in actions)
-    assert any(action.type == "increase_confidence" for action in actions)
+    assert any(action.type == ImprovementType.ADJUST_POLICY for action in actions)
+    assert any(action.type == ImprovementType.CHANGE_STRATEGY for action in actions)
+    assert any(action.type == ImprovementType.INCREASE_CONFIDENCE for action in actions)
 
 
 def test_policy_filtering() -> None:
     actions = [
-        ImprovementAction(type="adjust_policy", target="retry_limit", value=3, confidence=0.85),
-        ImprovementAction(type="adjust_policy", target="retry_limit", value=2, confidence=0.7),
-        ImprovementAction(type="change_strategy", target="timeout", value=10, confidence=0.65),
-        ImprovementAction(type="increase_confidence", target="policy_gate", value="strict", confidence=0.9),
+        ImprovementAction(type=ImprovementType.ADJUST_POLICY, target="retry_limit", value=3, confidence=0.85),
+        ImprovementAction(type=ImprovementType.ADJUST_POLICY, target="retry_limit", value=2, confidence=0.7),
+        ImprovementAction(type=ImprovementType.CHANGE_STRATEGY, target="timeout", value=10, confidence=0.65),
+        ImprovementAction(type=ImprovementType.INCREASE_CONFIDENCE, target="policy_gate", value="strict", confidence=0.9),
     ]
 
     approved = ImprovementPolicy(confidence_threshold=0.7).approve(actions)
 
     assert all(action.confidence >= 0.7 for action in approved)
     assert [action for action in approved if action.target == "retry_limit"] == [
-        ImprovementAction(type="adjust_policy", target="retry_limit", value=3, confidence=0.85)
+        ImprovementAction(type=ImprovementType.ADJUST_POLICY, target="retry_limit", value=3, confidence=0.85)
     ]
 
 
@@ -136,9 +136,9 @@ def test_optimizer_no_actions_on_good_run() -> None:
 
 def test_policy_deduplicates_by_target() -> None:
     actions = [
-        ImprovementAction(type="adjust_policy", target="retry_limit", value=3, confidence=0.85),
-        ImprovementAction(type="adjust_policy", target="retry_limit", value=2, confidence=0.75),
-        ImprovementAction(type="adjust_policy", target="retry_limit", value=5, confidence=0.80),
+        ImprovementAction(type=ImprovementType.ADJUST_POLICY, target="retry_limit", value=3, confidence=0.85),
+        ImprovementAction(type=ImprovementType.ADJUST_POLICY, target="retry_limit", value=2, confidence=0.75),
+        ImprovementAction(type=ImprovementType.ADJUST_POLICY, target="retry_limit", value=5, confidence=0.80),
     ]
 
     approved = ImprovementPolicy(confidence_threshold=0.7).approve(actions)

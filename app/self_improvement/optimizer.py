@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.self_improvement.models import EvaluationResult, ImprovementAction
+from app.self_improvement.models import EvaluationResult, ImprovementAction, ImprovementType
 
 
 class Optimizer:
@@ -14,7 +14,7 @@ class Optimizer:
         if evaluation.success_rate < 0.8:
             actions.append(
                 ImprovementAction(
-                    type="adjust_policy",
+                    type=ImprovementType.ADJUST_POLICY,
                     target="retry_limit",
                     value=3,
                     confidence=0.85,
@@ -24,7 +24,7 @@ class Optimizer:
         if evaluation.avg_latency > 2.0:
             actions.append(
                 ImprovementAction(
-                    type="change_strategy",
+                    type=ImprovementType.CHANGE_STRATEGY,
                     target="timeout",
                     value=10,
                     confidence=0.8,
@@ -34,7 +34,7 @@ class Optimizer:
         if evaluation.failure_patterns:
             actions.append(
                 ImprovementAction(
-                    type="increase_confidence",
+                    type=ImprovementType.INCREASE_CONFIDENCE,
                     target="policy_gate",
                     value="strict",
                     confidence=0.75,
@@ -44,7 +44,7 @@ class Optimizer:
         if evaluation.policy_violations:
             actions.append(
                 ImprovementAction(
-                    type="adjust_policy",
+                    type=ImprovementType.ADJUST_POLICY,
                     target="policy_violation_guard",
                     value="enabled",
                     confidence=0.9,
@@ -54,7 +54,7 @@ class Optimizer:
         if evaluation.retry_patterns:
             actions.append(
                 ImprovementAction(
-                    type="change_strategy",
+                    type=ImprovementType.CHANGE_STRATEGY,
                     target="retry_backoff",
                     value="exponential",
                     confidence=0.7,
