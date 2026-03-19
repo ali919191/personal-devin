@@ -1,5 +1,8 @@
 __pycache__/
 *.py[cod]
 *.pyo
+*.pyd
+*.log
+*.tmp
 .pytest_cache/
 tmp/
