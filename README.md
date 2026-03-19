@@ -1262,3 +1262,67 @@ pytest -q
 
 - `pydantic` — required by planning, memory, and execution layers (added in prior agent builds, not new to Agent 14).
 - No new third-party packages introduced by this module.
+
+## Agent 15 — Self-Improvement Loop
+
+### What was built
+
+- Full self-improvement feedback loop under `app/self_improvement/`.
+- `Analyzer` that loads execution and failure records from any duck-typed memory store.
+- `PatternDetector` that identifies recurring failure signals, high-latency operations, and low-success-rate tasks using deterministic thresholds.
+- `AdaptationEngine` that translates detected patterns into typed `SelfImprovementAdaptation` candidates.
+- `AdaptationPolicy` that validates, confidence-gates, and deduplicates adaptation candidates before approval.
+- `SelfImprovementLoop` orchestrator (and `run_self_improvement_loop()` functional entry point) that wires the full pipeline end-to-end.
+- 48 new deterministic unit tests across `tests/self_improvement/`.
+
+### Architecture
+
+- `app/self_improvement/models.py` *(extended)*
+  - Agent 15 models: `ExecutionRecord`, `FailureRecord`, `Pattern`, `SelfImprovementAdaptation`, `AdaptationResult`.
+  - `ExecutionRecord` exposes a computed `success_rate` property (successes / total_runs).
+- `app/self_improvement/analyzer.py`
+  - `Analyzer` class with `load_executions()` and `load_failures()`.
+  - Handles both `MemoryRecord` objects and plain `dict` entries via duck-typed helpers.
+  - Normalises timestamps to UTC-aware datetimes.
+- `app/self_improvement/pattern_detector.py`
+  - `PatternDetector` with three deterministic detection rules:
+    - `_repeated_failures` — groups failure records by `error_type`; emits a pattern per type that appears >= FAILURE_REPEAT_THRESHOLD (2) times.
+    - `_high_latency` — emits a pattern for every execution record whose `avg_latency > HIGH_LATENCY_THRESHOLD` (3.0 s).
+    - `_low_success_rate` — emits a pattern for every execution record whose `success_rate < LOW_SUCCESS_RATE_THRESHOLD` (0.7).
+  - Output is deterministically sorted by `(kind, signal_value, pattern_id)`.
+- `app/self_improvement/adaptation_engine.py`
+  - `AdaptationEngine.generate(patterns)` maps each pattern kind to one or more `SelfImprovementAdaptation` candidates.
+  - Per-kind rules:
+    - `repeated_failure` => `retry_with_backoff` (confidence x 0.95) + `escalate_on_failure` (confidence x 0.85).
+    - `high_latency` => `optimize_execution_path` (confidence x 0.9).
+    - `low_success_rate` => `adjust_strategy` (confidence x 0.9) + `lower_confidence_threshold` (confidence x 0.8).
+  - Output is deterministically sorted by `(-confidence_score, adaptation_id)`.
+- `app/self_improvement/policy.py` *(extended)*
+  - `AdaptationPolicy` with configurable `confidence_threshold` (default 0.6) and `forbidden_targets` list.
+  - `validate(adaptations)` returns `(approved, rejected)` tuple; deduplicates by `(action_type, target)` key.
+- `app/self_improvement/loop.py`
+  - `SelfImprovementLoop(analyzer, detector, engine, policy)` orchestrates the full pipeline.
+  - `run()` method: load records => detect patterns => generate adaptations => validate => return `AdaptationResult`.
+  - `run_self_improvement_loop(memory_store, policy)` functional entry point for external callers.
+- `app/self_improvement/logger.py` *(extended)*
+  - 7 new structured-log event constants: `LOOP_STARTED`, `ANALYSIS_COMPLETED`, `PATTERNS_DETECTED`, `ADAPTATIONS_GENERATED`, `POLICY_VALIDATED`, `ADAPTATIONS_APPROVED`, `LOOP_COMPLETED`.
+- `app/self_improvement/__init__.py` *(extended)*
+  - All Agent 15 symbols exported from the package.
+
+### How to run
+
+Run Agent 15 self-improvement loop tests:
+
+```bash
+pytest tests/self_improvement/ -q
+```
+
+Run full suite:
+
+```bash
+pytest -q
+```
+
+### Dependencies
+
+- None (pure internal logic using Python standard library only: `dataclasses`, `enum`, `datetime`, `collections`, `uuid`).
