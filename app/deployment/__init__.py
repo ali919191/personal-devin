@@ -1,5 +1,7 @@
 """Deployment planning layer (simulation only)."""
 
+from app.deployment.context_injector import build_deployment_context
+from app.deployment.deployment_context import DeploymentContext as RuntimeDeploymentContext
 from app.deployment.environment_resolver import (
     DEFAULT_ENVIRONMENT_CONFIG,
     DEFAULT_RESOLVER,
@@ -20,6 +22,8 @@ __all__ = [
     "DeploymentOrchestrator",
     "DeploymentProvider",
     "LocalDeploymentProvider",
+    "RuntimeDeploymentContext",
+    "build_deployment_context",
     # Agent 27 — environment resolver
     "EnvironmentConfig",
     "EnvironmentResolver",
