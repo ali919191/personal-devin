@@ -60,9 +60,21 @@ def test_manager_resolves_and_executes_provider(capsys: pytest.CaptureFixture[st
 
     stdout = capsys.readouterr().out.strip().splitlines()
     assert len(stdout) == 3
-    assert json.loads(stdout[0])["action"] == "integration_request"
-    assert json.loads(stdout[1])["action"] == "integration_resolved"
-    assert json.loads(stdout[2])["action"] == "integration_response"
+    request_log = json.loads(stdout[0])
+    resolved_log = json.loads(stdout[1])
+    response_log = json.loads(stdout[2])
+
+    assert request_log["action"] == "integration_request"
+    assert request_log["data"]["request_id"] == "req-1"
+    assert request_log["data"]["integration"] == "recording"
+    assert resolved_log["action"] == "integration_resolved"
+    assert resolved_log["data"]["request_id"] == "req-1"
+    assert resolved_log["data"]["integration"] == "recording"
+    assert response_log["action"] == "integration_response"
+    assert response_log["data"]["request_id"] == "req-1"
+    assert response_log["data"]["integration"] == "recording"
+    assert response_log["data"]["success"] is True
+    assert response_log["data"]["duration_seconds"] >= 0
 
 
 def test_manager_raises_not_found_for_unknown_provider(
@@ -75,7 +87,12 @@ def test_manager_raises_not_found_for_unknown_provider(
 
     stderr = capsys.readouterr().err.strip().splitlines()
     assert len(stderr) == 1
-    assert json.loads(stderr[0])["action"] == "integration_error"
+    error_log = json.loads(stderr[0])
+    assert error_log["action"] == "integration_error"
+    assert error_log["data"]["request_id"] == "req-1"
+    assert error_log["data"]["integration"] == "missing"
+    assert error_log["data"]["success"] is False
+    assert error_log["data"]["duration_seconds"] >= 0
 
 
 def test_manager_surfaces_provider_failure(capsys: pytest.CaptureFixture[str]) -> None:
@@ -88,4 +105,9 @@ def test_manager_surfaces_provider_failure(capsys: pytest.CaptureFixture[str]) -
 
     stderr = capsys.readouterr().err.strip().splitlines()
     assert len(stderr) == 1
-    assert json.loads(stderr[0])["error"] == "provider exploded"
+    error_log = json.loads(stderr[0])
+    assert error_log["error"] == "provider exploded"
+    assert error_log["data"]["request_id"] == "req-1"
+    assert error_log["data"]["integration"] == "failing"
+    assert error_log["data"]["success"] is False
+    assert error_log["data"]["duration_seconds"] >= 0

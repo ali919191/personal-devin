@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from time import perf_counter
+
 from app.core.logger import get_logger
 from app.integrations.exceptions import IntegrationError, IntegrationExecutionError
 from app.integrations.models import IntegrationRequest, IntegrationResponse
@@ -16,6 +18,7 @@ class IntegrationManager:
         self._logger = get_logger("app.integrations.manager")
 
     def execute(self, request: IntegrationRequest) -> IntegrationResponse:
+        started_at = perf_counter()
         self._logger.info(
             "integration_request",
             data={
@@ -35,15 +38,22 @@ class IntegrationManager:
             )
             response = integration.execute(request)
         except Exception as exc:
+            duration_seconds = perf_counter() - started_at
             self._logger.error(
                 "integration_error",
                 error=str(exc),
-                data={"request_id": request.id, "integration": request.integration},
+                data={
+                    "request_id": request.id,
+                    "integration": request.integration,
+                    "success": False,
+                    "duration_seconds": duration_seconds,
+                },
             )
             if isinstance(exc, IntegrationError):
                 raise
             raise IntegrationExecutionError(str(exc)) from exc
 
+        duration_seconds = perf_counter() - started_at
         self._logger.info(
             "integration_response",
             data={
@@ -52,6 +62,8 @@ class IntegrationManager:
                 "payload": response.payload,
                 "metadata": response.metadata,
                 "timestamp": response.timestamp.isoformat(),
+                "success": True,
+                "duration_seconds": duration_seconds,
             },
         )
         return response
