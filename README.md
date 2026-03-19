@@ -1218,3 +1218,47 @@ pytest -q
 ### Dependencies
 
 - None (pure internal logic)
+
+## Agent 14 — Self-Improvement System
+
+### What was built
+
+- Deterministic self-improvement subsystem under `app/self_improvement/`.
+- Evaluation pipeline that extracts execution quality signals from memory history.
+- Optimization generator that proposes typed improvement actions from evaluated patterns.
+- Policy gate that filters low-confidence or conflicting actions before approval.
+- Agent loop integration that runs self-improvement only after execution and persistence complete.
+
+### Architecture
+
+- `app/self_improvement/models.py`
+  - Dataclass contracts for `EvaluationResult`, `ImprovementAction`, and `OptimizationReport`.
+- `app/self_improvement/evaluator.py`
+  - Computes stable metrics and pattern summaries from memory records.
+- `app/self_improvement/optimizer.py`
+  - Maps evaluation findings into deterministic improvement proposals.
+- `app/self_improvement/policy.py`
+  - Applies confidence thresholds and deterministic de-duplication by target.
+- `app/self_improvement/engine.py`
+  - Orchestrates evaluate -> optimize -> policy approval and logs structured events.
+- `app/agent/agent_loop.py`
+  - Invokes self-improvement after persistence and logs approved improvement counts.
+
+### How to run
+
+Run self-improvement tests:
+
+```bash
+pytest tests/test_self_improvement.py -q
+```
+
+Run full suite:
+
+```bash
+pytest -q
+```
+
+### Dependencies
+
+- No new third-party dependencies beyond existing project requirements.
+- Reuses the project logger and memory service interfaces.
