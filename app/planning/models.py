@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timezone
 from typing import Literal
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class Task(BaseModel):
@@ -157,7 +157,8 @@ class Adaptation(BaseModel):
     priority: int = Field(..., ge=0)
     created_at: datetime = Field(...)
 
-    @validator("created_at", pre=True, always=True)
+    @field_validator("created_at", mode="before")
+    @classmethod
     def normalize_created_at(cls, v: datetime | str | None) -> datetime:
         if v is None:
             raise ValueError("created_at must be provided")
