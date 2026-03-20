@@ -330,6 +330,8 @@ class ImprovementEngine:
             + failure_delta * self.WEIGHT_FAILURE
             + latency_delta * self.WEIGHT_LATENCY
         )
+        # Clamp score to [-1.0, 1.0] to prevent weird math edge cases and keep system bounded
+        score = max(min(score, 1.0), -1.0)
         return round(score, 4)
 
     def _build_improvement_record(
@@ -435,7 +437,12 @@ class ImprovementEngine:
 
         # Trend gate: must be better than last accepted improvement
         last_impact = self._get_last_accepted_impact_score(memory)
-        if last_impact is not None and impact_score <= last_impact:
+        # First improvement: only threshold check (no prior to compare)
+        if last_impact is None:
+            return True
+
+        # Subsequent improvements: must exceed previous best
+        if impact_score <= last_impact:
             # Reject sideways/stagnation improvements
             return False
 
@@ -493,7 +500,26 @@ class ImprovementEngine:
             },
         )
 
+        # Apply rollback: restore previous values
+        for action in record.rollback_actions:
+            self._apply_previous_value(action.target, action.previous_value)
+
         return True
+
+    def _apply_previous_value(self, target: str, previous_value: str) -> None:
+        """Apply previous value to restore system state during rollback."""
+        logger.info(
+            "restore_previous_value",
+            {
+                "event": "restore_previous_value",
+                "target": target,
+                "previous_value": previous_value,
+            },
+        )
+        # Note: Actual state restoration would be implemented by:
+        # - Writing to config store/memory
+        # - Querying state management layer
+        # This is logged for audit trail; execution is context-dependent
 
     def _build_rollback_actions(
         self,

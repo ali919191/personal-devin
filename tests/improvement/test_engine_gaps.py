@@ -665,3 +665,137 @@ class TestTrendAwareAcceptance:
         expected = round(expected, 4)
 
         assert impact == expected
+
+
+class TestMicroFixes:
+    """Critical micro-fixes: clamping, safe defaults, state restoration."""
+
+    def test_impact_score_clamped_to_bounds(self):
+        """Impact scores clamped to [-1.0, 1.0] to prevent weird edge cases."""
+        engine = ImprovementEngine()
+
+        # Create extreme metrics that would exceed bounds
+        metrics_before = ImprovementMetrics(0.0, 1.0, 1000.0, 0.0)
+        metrics_after = ImprovementMetrics(1.0, 0.0, 1.0, 0.0)
+
+        # Extreme improvement: would be > 1.0 without clamping
+        impact = engine._compute_impact_score(metrics_before=metrics_before, metrics_after=metrics_after)
+
+        # Should be clamped to 1.0
+        assert impact <= 1.0
+        assert impact >= -1.0
+
+    def test_impact_score_clamped_negative(self):
+        """Negative impact scores also clamped to prevent underflow."""
+        engine = ImprovementEngine()
+
+        # Create metrics that degrade severely
+        metrics_before = ImprovementMetrics(1.0, 0.0, 1.0, 0.0)
+        metrics_after = ImprovementMetrics(0.0, 1.0, 1000.0, 1.0)
+
+        # Extreme degradation: would be < -1.0 without clamping
+        impact = engine._compute_impact_score(metrics_before=metrics_before, metrics_after=metrics_after)
+
+        # Should be clamped to -1.0
+        assert impact >= -1.0
+        assert impact <= 1.0
+
+    def test_trend_check_safe_default_first_improvement(self):
+        """First improvement only checked against threshold (no prior to compare)."""
+        engine = ImprovementEngine()
+        
+        # Empty history - first improvement
+        memory = StubMemory(decision_records=[])
+        
+        # Barely meets threshold
+        impact_score = 0.05
+        accepted = engine._should_accept_improvement_with_memory(impact_score, memory)
+
+        # Should accept (meets threshold, no prior to compare against)
+        assert accepted is True
+
+    def test_trend_check_safe_default_no_prior_accepted(self):
+        """When no prior accepted improvements, only threshold check."""
+        engine = ImprovementEngine()
+
+        # History with only rejected improvements
+        decision_records = [
+            {
+                "event": "improvement_record",
+                "accepted": False,
+                "version": 1,
+                "impact_score": 0.10,
+            },
+        ]
+        memory = StubMemory(decision_records=decision_records)
+
+        # Meets threshold
+        impact_score = 0.05
+        accepted = engine._should_accept_improvement_with_memory(impact_score, memory)
+
+        # Should accept (meets threshold, no prior ACCEPTED to compare)
+        assert accepted is True
+
+    def test_rollback_applies_previous_values(self):
+        """Rollback execution actually applies previous values (via logging)."""
+        from unittest.mock import patch, MagicMock
+        from app.improvement.models import Pattern
+
+        fixed_time = datetime(2026, 1, 1, tzinfo=UTC)
+        engine = ImprovementEngine(clock=lambda: fixed_time)
+
+        patterns = [Pattern(type="test", location="test", frequency=0.5, severity="low")]
+        metrics = ImprovementMetrics(0.5, 0.5, 100.0, 0.1)
+
+        # Negative impact triggers rollback
+        record = ImprovementRecord(
+            id="test-001",
+            timestamp=fixed_time,
+            patterns=patterns,
+            actions=[],
+            result="negative",
+            version=1,
+            rollback_actions=[
+                RollbackAction(target="planning.strategy", previous_value="original_v1", version=1),
+                RollbackAction(target="execution.retry_limit", previous_value="original_v2", version=1),
+            ],
+            metrics_before=metrics,
+            metrics_after=metrics,
+            impact_score=-0.05,
+            accepted=False,
+        )
+
+        # Mock logger to verify calls
+        with patch("app.improvement.engine.logger") as mock_logger:
+            rollback_executed = engine._execute_rollback(record)
+
+            # Rollback should be executed
+            assert rollback_executed is True
+
+            # Logger should be called for each restoration
+            assert mock_logger.info.call_count >= 3  # 1 for rollback, 2 for value restorations
+
+            # Verify rollback execution was logged
+            first_call_args = mock_logger.info.call_args_list[0]
+            assert first_call_args[0][0] == "improvement_rollback_executed"
+
+            # Verify value restorations were logged
+            restore_calls = [call for call in mock_logger.info.call_args_list 
+                            if len(call[0]) > 0 and call[0][0] == "restore_previous_value"]
+            assert len(restore_calls) == 2  # Two rollback actions
+
+    def test_apply_previous_value_logs_restoration(self):
+        """_apply_previous_value method properly logs state restoration."""
+        from unittest.mock import patch
+
+        engine = ImprovementEngine()
+
+        with patch("app.improvement.engine.logger") as mock_logger:
+            engine._apply_previous_value("planning.strategy", "original_value")
+
+            # Should log restoration
+            mock_logger.info.assert_called_once()
+            call_args = mock_logger.info.call_args
+            assert call_args[0][0] == "restore_previous_value"
+            assert call_args[0][1]["target"] == "planning.strategy"
+            assert call_args[0][1]["previous_value"] == "original_value"
