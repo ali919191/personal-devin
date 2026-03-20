@@ -11,6 +11,17 @@ class BaseIntegration(ABC):
     """Abstract provider contract for deterministic integrations."""
 
     name: str
+    # Non-empty frozenset = manager enforces action allow-list before calling execute.
+    # Empty frozenset (default) = no action restriction.
+    allowed_actions: frozenset[str] = frozenset()
+
+    def validate_config(self, config: dict) -> None:
+        """Validate provider configuration before use.
+
+        Override in subclasses to enforce provider-specific config constraints.
+        The default implementation is a no-op (all configs accepted).
+        Raise ValueError with a descriptive message on validation failure.
+        """
 
     @abstractmethod
     def execute(self, request: IntegrationRequest) -> IntegrationResponse:

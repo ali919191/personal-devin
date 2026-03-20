@@ -1839,3 +1839,78 @@ Run full test suite:
 ```bash
 pytest -q
 ```
+
+---
+
+## Agent 32 — Integrations Layer
+
+### What was built
+
+A deterministic, extensible integrations framework that acts as a strict
+boundary between the autonomous agent and all external systems (APIs, tools,
+file-systems, services).
+
+| Component | File | Responsibility |
+|---|---|---|
+| `BaseIntegration` | `app/integrations/base.py` | Abstract provider contract with `validate_config` + `execute` |
+| `IntegrationRegistry` | `app/integrations/registry.py` | Explicit-registration-only registry; no auto-discovery |
+| `IntegrationManager` | `app/integrations/manager.py` | Entry point for all integrations; enforces logging, validation, error handling |
+| `IntegrationRequest` / `IntegrationResponse` | `app/integrations/models.py` | Pydantic-validated structured payload types |
+| `FilesystemIntegration` | `app/integrations/providers/filesystem.py` | Read / write / list — no hidden traversal or side effects |
+| `HTTPIntegration` | `app/integrations/providers/http.py` | GET / POST — no implicit retries |
+| `ShellIntegration` | `app/integrations/providers/shell.py` | Explicit subprocess execution with timeout control |
+| `MockIntegration` | `app/integrations/providers/mock.py` | Deterministic stub for offline tests |
+
+### Architecture decisions
+
+- **Explicit registration only** — integrations must be registered by name
+  before use; no class scanning, no entry-point magic.
+- **Structured request/response** — all I/O flows through `IntegrationRequest`
+  and `IntegrationResponse` (Pydantic models), preventing untyped dict leakage.
+- **`validate_config` hook** — each provider can enforce config constraints
+  before wiring; base provides a safe no-op default.
+- **No hidden retries / side effects** — the HTTP provider rejects any payload
+  that requests retry behaviour; the filesystem provider creates parent
+  directories only on `write`, no implicit reads.
+- **Structured observability** — `IntegrationManager` emits JSON log events
+  (`integration_request`, `integration_resolved`, `integration_response`,
+  `integration_error`) via the centralised `core.logger`.
+
+### File structure
+
+```text
+app/integrations/
+├── __init__.py
+├── base.py
+├── exceptions.py
+├── manager.py
+├── models.py
+├── registry.py
+└── providers/
+    ├── filesystem.py
+    ├── http.py
+    ├── mock.py
+    └── shell.py
+
+tests/integrations/
+├── test_manager.py
+├── test_providers.py
+└── test_registry.py
+```
+
+### How to run
+
+```bash
+# Integration tests only
+pytest tests/integrations/ -v
+
+# Full suite
+pytest -q
+```
+
+### Dependencies
+
+- Python ≥ 3.11 (uses `datetime.UTC`, `from __future__ import annotations`)
+- `pydantic` ≥ 2 (models)
+- Standard library only for HTTP (`urllib`) and filesystem (`pathlib`, `os`)
+- No third-party HTTP client introduced (keeps the dependency surface minimal)

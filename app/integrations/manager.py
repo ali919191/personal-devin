@@ -18,12 +18,14 @@ class IntegrationManager:
         self._logger = get_logger("app.integrations.manager")
 
     def execute(self, request: IntegrationRequest) -> IntegrationResponse:
+        action = request.payload.get("action") if isinstance(request.payload, dict) else None
         started_at = perf_counter()
         self._logger.info(
             "integration_request",
             data={
                 "request_id": request.id,
                 "integration": request.integration,
+                "action": action,
                 "payload": request.payload,
                 "metadata": request.metadata,
                 "timestamp": request.timestamp.isoformat(),
@@ -36,34 +38,49 @@ class IntegrationManager:
                 "integration_resolved",
                 data={"request_id": request.id, "integration": request.integration},
             )
+
+            # Action allow-list: enforced when the provider declares allowed_actions.
+            allowed = getattr(integration, "allowed_actions", frozenset())
+            if allowed and action not in allowed:
+                raise IntegrationExecutionError(
+                    f"action {action!r} is not permitted by {request.integration}; "
+                    f"allowed: {sorted(allowed)}"
+                )
+
             response = integration.execute(request)
         except Exception as exc:
-            duration_seconds = perf_counter() - started_at
+            duration_ms = (perf_counter() - started_at) * 1000
             self._logger.error(
                 "integration_error",
                 error=str(exc),
                 data={
                     "request_id": request.id,
                     "integration": request.integration,
+                    "action": action,
+                    "status": "error",
+                    "duration_ms": duration_ms,
+                    "error": str(exc),
                     "success": False,
-                    "duration_seconds": duration_seconds,
                 },
             )
             if isinstance(exc, IntegrationError):
                 raise
             raise IntegrationExecutionError(str(exc)) from exc
 
-        duration_seconds = perf_counter() - started_at
+        duration_ms = (perf_counter() - started_at) * 1000
         self._logger.info(
             "integration_response",
             data={
                 "request_id": response.id,
                 "integration": response.integration,
+                "action": action,
+                "status": "ok",
+                "duration_ms": duration_ms,
+                "error": None,
                 "payload": response.payload,
                 "metadata": response.metadata,
                 "timestamp": response.timestamp.isoformat(),
                 "success": True,
-                "duration_seconds": duration_seconds,
             },
         )
         return response

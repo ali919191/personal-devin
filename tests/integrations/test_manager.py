@@ -74,7 +74,9 @@ def test_manager_resolves_and_executes_provider(capsys: pytest.CaptureFixture[st
     assert response_log["data"]["request_id"] == "req-1"
     assert response_log["data"]["integration"] == "recording"
     assert response_log["data"]["success"] is True
-    assert response_log["data"]["duration_seconds"] >= 0
+    assert response_log["data"]["status"] == "ok"
+    assert response_log["data"]["error"] is None
+    assert response_log["data"]["duration_ms"] >= 0
 
 
 def test_manager_raises_not_found_for_unknown_provider(
@@ -92,7 +94,8 @@ def test_manager_raises_not_found_for_unknown_provider(
     assert error_log["data"]["request_id"] == "req-1"
     assert error_log["data"]["integration"] == "missing"
     assert error_log["data"]["success"] is False
-    assert error_log["data"]["duration_seconds"] >= 0
+    assert error_log["data"]["status"] == "error"
+    assert error_log["data"]["duration_ms"] >= 0
 
 
 def test_manager_surfaces_provider_failure(capsys: pytest.CaptureFixture[str]) -> None:
@@ -110,4 +113,31 @@ def test_manager_surfaces_provider_failure(capsys: pytest.CaptureFixture[str]) -
     assert error_log["data"]["request_id"] == "req-1"
     assert error_log["data"]["integration"] == "failing"
     assert error_log["data"]["success"] is False
-    assert error_log["data"]["duration_seconds"] >= 0
+    assert error_log["data"]["status"] == "error"
+    assert error_log["data"]["duration_ms"] >= 0
+
+
+def test_manager_rejects_disallowed_action(capsys: pytest.CaptureFixture[str]) -> None:
+    from app.integrations.providers.filesystem import FilesystemIntegration
+
+    registry = IntegrationRegistry()
+    registry.register(FilesystemIntegration())
+    manager = IntegrationManager(registry)
+
+    request = IntegrationRequest(
+        id="req-bad",
+        integration="filesystem",
+        payload={"action": "delete", "path": "/tmp/x"},
+        metadata={},
+        timestamp=datetime(2026, 3, 19, tzinfo=UTC),
+    )
+
+    with pytest.raises(IntegrationExecutionError, match="not permitted"):
+        manager.execute(request)
+
+    stderr = capsys.readouterr().err.strip().splitlines()
+    assert len(stderr) == 1
+    error_log = json.loads(stderr[0])
+    assert error_log["data"]["action"] == "delete"
+    assert error_log["data"]["integration"] == "filesystem"
+    assert error_log["data"]["status"] == "error"
