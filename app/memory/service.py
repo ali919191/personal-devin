@@ -24,7 +24,7 @@ class MemoryService:
     ) -> None:
         self._repository = repository or MemoryRepository()
         self._feedback_engine = FeedbackEngine()
-        self._now_fn = now_fn or datetime.utcnow
+        self._now_fn = now_fn or (lambda: datetime.now(UTC))
 
     def set_now_fn(self, now_fn: Callable[[], datetime]) -> None:
         """Override timestamp source for deterministic testability."""

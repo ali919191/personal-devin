@@ -26,7 +26,7 @@ class ExecutionRecord(BaseModel):
     result: dict = Field(default_factory=dict)
     success: bool = False
     errors: list[str] = Field(default_factory=list)
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     metadata: dict = Field(default_factory=dict)
 
 

@@ -12,10 +12,10 @@ echo "=============================="
 echo "STEP 1: Checking clean repo state"
 echo "=============================="
 if [[ -n $(git status --porcelain) ]]; then
-  echo "❌ Repo is not clean. Commit or stash changes."
+  echo "ERROR: Repo is not clean. Commit or stash changes."
   exit 1
 fi
-echo "✅ Repo clean"
+echo "OK: Repo clean"
 
 echo "=============================="
 echo "STEP 2: Setting up virtual environment"
@@ -30,7 +30,7 @@ source .venv/bin/activate
 pip install --upgrade pip > /dev/null
 pip install -r requirements.txt > /dev/null
 
-echo "✅ Environment ready"
+echo "OK: Environment ready"
 
 echo "=============================="
 echo "STEP 3: Running full test suite"
@@ -41,4 +41,4 @@ pytest -q
 echo "=============================="
 echo "STEP 4: Simulation Complete"
 echo "=============================="
-echo "✅ All tests passed"
+echo "OK: All tests passed"
