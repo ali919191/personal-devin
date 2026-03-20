@@ -62,6 +62,7 @@ class PlanningEngine:
                         "source": "loop_controller",
                         "attempt_count": int(state.get("attempt_count", 0)),
                         "last_failure_reason": state.get("last_failure_reason"),
+                        "strategy_hint": state.get("strategy_hint", "none"),
                         "context_records": len((context or {}).get("recent", [])),
                     },
                 }
@@ -196,12 +197,14 @@ class LoopController:
         self.failure_threshold = failure_threshold
         self._clock = clock or (lambda: datetime.now(UTC))
         self.logger = get_logger(__name__)
+        self.strategy_stats: dict[str, dict[str, dict[str, float | int]]] = {}
 
     def run(self, goal: str) -> dict[str, Any]:
         iteration = 0
         failures = 0
         decision: Decision = "retry_same"
         context = self._retrieve_context(goal)
+        self._merge_strategy_stats(self._build_strategy_stats_from_context(context))
 
         state: dict[str, Any] = {
             "goal": goal,
@@ -212,6 +215,7 @@ class LoopController:
             "last_error_type": None,
             "last_retryable": None,
             "last_decision": None,
+            "strategy_hint": "none",
         }
 
         while iteration < self.max_iterations:
@@ -264,6 +268,14 @@ class LoopController:
             # 4. DECISION
             decision = self._decide_next_step(state, classification)
             state["last_decision"] = decision
+            state["strategy_hint"] = self._build_strategy_hint(decision, classification)
+
+            strategy_pattern = str(classification.get("error_type", "none"))
+            self._update_strategy_stats(
+                pattern=strategy_pattern,
+                decision=decision,
+                success=success,
+            )
 
             # 5. MEMORY STORE
             record = {
@@ -275,6 +287,9 @@ class LoopController:
                 "classification": classification,
                 "success": success,
                 "decision": decision,
+                "strategy_pattern": strategy_pattern,
+                "strategy_hint": state["strategy_hint"],
+                "strategy_stats": self._strategy_snapshot(),
             }
             self.memory.save(record)
             self._log_event(
@@ -292,6 +307,7 @@ class LoopController:
                     "result": result,
                     "classification": classification,
                     "decision": decision,
+                    "strategy_hint": state["strategy_hint"],
                 }
             )
 
@@ -424,21 +440,219 @@ class LoopController:
 
         error_type = str(classification.get("error_type", "runtime_error"))
         retryable = bool(classification.get("retryable", False))
-        attempt_count = int(state.get("attempt_count", 0))
+        context = state.get("memory_context")
+        if not isinstance(context, dict):
+            context = {}
 
         if error_type in {"policy_violation", "security_violation"}:
             return "escalate"
 
-        if error_type == "invalid_plan":
-            return "adjust_plan"
+        return self._select_best_decision(state, classification, context)
 
-        if retryable and attempt_count < self.failure_threshold:
-            return "retry_same"
+    def _select_best_decision(
+        self,
+        state: dict[str, Any],
+        classification: dict[str, Any],
+        context: dict[str, Any],
+    ) -> Decision:
+        pattern = str(classification.get("error_type", "runtime_error"))
+        retryable = bool(classification.get("retryable", False))
 
-        if retryable:
-            return "adjust_plan"
+        candidates: list[Decision]
+        if pattern == "invalid_plan":
+            candidates = ["adjust_plan", "abort"]
+        elif retryable:
+            candidates = ["retry_same", "adjust_plan", "abort"]
+        else:
+            candidates = ["adjust_plan", "abort"]
 
-        return "abort"
+        # If recent history already shows repeated retry failures for this pattern,
+        # de-prioritize retry_same deterministically.
+        retry_failures = self._count_recent_pattern_failures(context, pattern, "retry_same")
+        if retry_failures >= 2 and "retry_same" in candidates:
+            candidates = [candidate for candidate in candidates if candidate != "retry_same"]
+            candidates.append("retry_same")
+
+        scored: list[tuple[float, Decision]] = []
+        for candidate in candidates:
+            scored.append((self._decision_score(pattern, candidate, state), candidate))
+
+        scored.sort(key=lambda item: (-item[0], self._decision_rank(item[1])))
+        return scored[0][1]
+
+    def _decision_score(self, pattern: str, decision: Decision, state: dict[str, Any]) -> float:
+        pattern_stats = self.strategy_stats.get(pattern, {})
+        decision_stats = pattern_stats.get(decision, {})
+
+        attempts = int(decision_stats.get("attempts", 0))
+        successes = int(decision_stats.get("successes", 0))
+        success_rate = float(decision_stats.get("success_rate", 0.0))
+        confidence = float(decision_stats.get("confidence", 1.0))
+
+        prior = {
+            "retry_same": 0.60,
+            "adjust_plan": 0.55,
+            "abort": 0.20,
+            "escalate": 0.10,
+        }[decision]
+
+        attempts_penalty = min(attempts * 0.02, 0.20)
+        success_bonus = min(successes * 0.03, 0.30)
+
+        # After repeated failures near threshold, bias toward changing strategy.
+        attempt_count = int(state.get("attempt_count", 0))
+        if decision == "retry_same" and attempt_count >= self.failure_threshold:
+            confidence = max(0.10, confidence - 0.25)
+
+        return prior + success_rate * confidence + success_bonus - attempts_penalty
+
+    def _decision_rank(self, decision: Decision) -> int:
+        order = {
+            "adjust_plan": 0,
+            "retry_same": 1,
+            "abort": 2,
+            "escalate": 3,
+        }
+        return order[decision]
+
+    def _count_recent_pattern_failures(
+        self,
+        context: dict[str, Any],
+        pattern: str,
+        decision: Decision,
+    ) -> int:
+        recent = context.get("recent_failures", [])
+        if not isinstance(recent, list):
+            return 0
+
+        count = 0
+        for record in recent:
+            if not isinstance(record, dict):
+                continue
+            record_pattern = str(record.get("strategy_pattern") or "")
+            record_decision = str(record.get("decision") or "")
+            if record_pattern == pattern and record_decision == decision:
+                count += 1
+        return count
+
+    def _build_strategy_stats_from_context(
+        self,
+        context: dict[str, Any],
+    ) -> dict[str, dict[str, dict[str, float | int]]]:
+        recent = context.get("recent", [])
+        if not isinstance(recent, list):
+            return {}
+
+        stats: dict[str, dict[str, dict[str, float | int]]] = {}
+        for record in recent:
+            if not isinstance(record, dict):
+                continue
+
+            classification = record.get("classification")
+            pattern = "none"
+            if isinstance(classification, dict):
+                pattern = str(classification.get("error_type", "none"))
+
+            decision = str(record.get("decision", ""))
+            if decision not in {"retry_same", "adjust_plan", "abort", "escalate"}:
+                continue
+
+            success = bool(record.get("success", False))
+            if pattern not in stats:
+                stats[pattern] = {}
+            if decision not in stats[pattern]:
+                stats[pattern][decision] = {
+                    "attempts": 0,
+                    "successes": 0,
+                    "success_rate": 0.0,
+                    "confidence": 1.0,
+                }
+
+            item = stats[pattern][decision]
+            item["attempts"] = int(item["attempts"]) + 1
+            if success:
+                item["successes"] = int(item["successes"]) + 1
+
+            attempts = int(item["attempts"])
+            successes = int(item["successes"])
+            item["success_rate"] = successes / attempts if attempts > 0 else 0.0
+            item["confidence"] = self._update_confidence(
+                current=float(item.get("confidence", 1.0)),
+                decision=decision,  # type: ignore[arg-type]
+                success=success,
+            )
+
+        return stats
+
+    def _merge_strategy_stats(
+        self,
+        incoming: dict[str, dict[str, dict[str, float | int]]],
+    ) -> None:
+        for pattern, decision_map in incoming.items():
+            if pattern not in self.strategy_stats:
+                self.strategy_stats[pattern] = {}
+            for decision, stats in decision_map.items():
+                if decision not in self.strategy_stats[pattern]:
+                    self.strategy_stats[pattern][decision] = dict(stats)
+
+    def _update_strategy_stats(self, pattern: str, decision: Decision, success: bool) -> None:
+        if pattern not in self.strategy_stats:
+            self.strategy_stats[pattern] = {}
+        if decision not in self.strategy_stats[pattern]:
+            self.strategy_stats[pattern][decision] = {
+                "attempts": 0,
+                "successes": 0,
+                "success_rate": 0.0,
+                "confidence": 1.0,
+            }
+
+        stats = self.strategy_stats[pattern][decision]
+        stats["attempts"] = int(stats.get("attempts", 0)) + 1
+        if success:
+            stats["successes"] = int(stats.get("successes", 0)) + 1
+
+        attempts = int(stats["attempts"])
+        successes = int(stats["successes"])
+        stats["success_rate"] = successes / attempts if attempts > 0 else 0.0
+        stats["confidence"] = self._update_confidence(
+            current=float(stats.get("confidence", 1.0)),
+            decision=decision,
+            success=success,
+        )
+
+    def _update_confidence(self, current: float, decision: Decision, success: bool) -> float:
+        if success:
+            return min(2.0, current + 0.10)
+
+        penalty = 0.20 if decision == "retry_same" else 0.10
+        return max(0.10, current - penalty)
+
+    def _strategy_snapshot(self) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for pattern in sorted(self.strategy_stats.keys()):
+            for decision in sorted(self.strategy_stats[pattern].keys()):
+                stats = self.strategy_stats[pattern][decision]
+                rows.append(
+                    {
+                        "pattern": pattern,
+                        "decision": decision,
+                        "attempts": int(stats.get("attempts", 0)),
+                        "successes": int(stats.get("successes", 0)),
+                        "success_rate": float(stats.get("success_rate", 0.0)),
+                        "confidence": float(stats.get("confidence", 1.0)),
+                    }
+                )
+        return rows
+
+    def _build_strategy_hint(self, decision: Decision, classification: dict[str, Any]) -> str:
+        pattern = str(classification.get("error_type", "runtime_error"))
+        if decision == "adjust_plan":
+            return f"avoid_previous_plan_pattern:{pattern}"
+        if decision == "retry_same":
+            return f"retry_with_same_plan:{pattern}"
+        if decision == "escalate":
+            return f"escalate_issue:{pattern}"
+        return "finalize_goal"
 
     def _log_event(
         self,
@@ -486,6 +700,7 @@ class LoopController:
             "last_error_type": state.get("last_error_type"),
             "last_retryable": state.get("last_retryable"),
             "last_decision": state.get("last_decision"),
+            "strategy_hint": state.get("strategy_hint"),
             "history_size": len(history) if isinstance(history, list) else 0,
             "memory_context_size": len(memory_context.get("recent", []))
             if isinstance(memory_context, dict)

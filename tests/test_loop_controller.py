@@ -20,6 +20,7 @@ class MockPlannerWithContext:
             "step": "test",
             "history_size": len(state.get("history", [])),
             "attempt_count": state.get("attempt_count", 0),
+            "strategy_hint": state.get("strategy_hint", "none"),
         }
 
 
@@ -171,7 +172,66 @@ def test_loop_passes_feedback_state_and_context_to_planner():
     assert second_state["last_error_type"] == "invalid_plan"
     assert second_state["last_failure_reason"] == "invalid_plan"
     assert second_state["last_decision"] == "adjust_plan"
+    assert second_state["strategy_hint"].startswith("avoid_previous_plan_pattern:")
 
     assert first_context["goal"] == "test goal"
     assert second_context["goal"] == "test goal"
     assert len(second_context["recent"]) >= 1
+
+
+def test_strategy_stats_persisted_in_memory_records():
+    planner = MockPlannerWithContext()
+    memory = MockMemory()
+    controller = LoopController(
+        planner=planner,
+        executor=SequenceExecutor(
+            [
+                {"success": False, "error_type": "runtime_error", "retryable": True},
+                {"success": False, "error_type": "runtime_error", "retryable": True},
+                {"success": True},
+            ]
+        ),
+        memory=memory,
+        max_iterations=5,
+        failure_threshold=4,
+    )
+
+    result = controller.run("test goal")
+
+    assert result["status"] == "success"
+    assert len(memory.data) == 3
+    assert "strategy_stats" in memory.data[-1]
+
+    rows = memory.data[-1]["strategy_stats"]
+    runtime_rows = [row for row in rows if row["pattern"] == "runtime_error"]
+    assert len(runtime_rows) >= 1
+    assert all("success_rate" in row for row in runtime_rows)
+
+
+def test_retry_same_confidence_downgrades_after_repeated_failures():
+    planner = MockPlannerWithContext()
+    memory = MockMemory()
+    controller = LoopController(
+        planner=planner,
+        executor=SequenceExecutor(
+            [
+                {"success": False, "error_type": "runtime_error", "retryable": True},
+                {"success": False, "error_type": "runtime_error", "retryable": True},
+                {"success": False, "error_type": "runtime_error", "retryable": True},
+            ]
+        ),
+        memory=memory,
+        max_iterations=3,
+        failure_threshold=3,
+    )
+
+    result = controller.run("test goal")
+
+    assert result["status"] in {"failed", "stopped"}
+    retry_rows = [
+        row
+        for row in memory.data[-1]["strategy_stats"]
+        if row["pattern"] == "runtime_error" and row["decision"] == "retry_same"
+    ]
+    if retry_rows:
+        assert retry_rows[0]["confidence"] < 1.0
