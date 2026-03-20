@@ -24,6 +24,14 @@ class PlannerProtocol(Protocol):
     def create_plan(self, state: dict[str, Any], context: dict[str, Any] | None = None) -> Any:
         """Build an execution plan from explicit state."""
 
+    def repair_step(
+        self,
+        step: dict[str, Any],
+        state: dict[str, Any],
+        context: dict[str, Any] | None = None,
+    ) -> Any:
+        """Return a repaired step payload (or compatible plan structure)."""
+
 
 class ExecutorProtocol(Protocol):
     """Executor interface expected by the loop controller."""
@@ -87,6 +95,27 @@ class PlanningEngine:
         if isinstance(metadata, dict):
             return dict(metadata)
         return {}
+
+    def repair_step(
+        self,
+        step: dict[str, Any],
+        state: dict[str, Any],
+        context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        repaired = dict(step)
+        action = str(repaired.get("action", "execute_step"))
+        if "[repaired]" not in action:
+            repaired["action"] = f"{action} [repaired]"
+
+        metadata = repaired.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+        metadata = dict(metadata)
+        metadata["strategy_hint"] = state.get("strategy_hint", "none")
+        metadata["repair_reason"] = state.get("last_failure_reason")
+        metadata["repair_context_records"] = len((context or {}).get("recent", []))
+        repaired["metadata"] = metadata
+        return repaired
 
 
 class ExecutionRunner:
@@ -229,7 +258,14 @@ class FileMemoryStore:
         }
 
 
-Decision = Literal["retry_same", "adjust_plan", "abort", "escalate", "advance_step"]
+Decision = Literal[
+    "retry_same",
+    "adjust_plan",
+    "repair_step",
+    "abort",
+    "escalate",
+    "advance_step",
+]
 
 
 class LoopController:
@@ -242,6 +278,7 @@ class LoopController:
         memory: MemoryProtocol,
         max_iterations: int = 10,
         failure_threshold: int = 3,
+        step_failure_threshold: int = 2,
         clock: Callable[[], datetime] | None = None,
     ):
         self.planner = planner
@@ -249,6 +286,7 @@ class LoopController:
         self.memory = memory
         self.max_iterations = max_iterations
         self.failure_threshold = failure_threshold
+        self.step_failure_threshold = step_failure_threshold
         self._clock = clock or (lambda: datetime.now(UTC))
         self.logger = get_logger(__name__)
         self.strategy_stats: dict[str, dict[str, dict[str, float | int]]] = {}
@@ -352,6 +390,21 @@ class LoopController:
             state["last_decision"] = decision
             state["strategy_hint"] = self._build_strategy_hint(decision, classification)
 
+            repair_applied = False
+            original_step_payload: dict[str, Any] | None = None
+            repaired_step_payload: dict[str, Any] | None = None
+            if not success and decision == "repair_step":
+                original_step_payload = self._safe_payload(current_step)
+                repaired = self._repair_step(
+                    step=current_step,
+                    state=state,
+                    context=context,
+                )
+                self._replace_current_step(plan, repaired)
+                repaired_current = self._current_step(plan)
+                repaired_step_payload = self._safe_payload(repaired_current)
+                repair_applied = True
+
             self._update_strategy_stats(
                 pattern=strategy_pattern,
                 decision=decision,
@@ -372,6 +425,9 @@ class LoopController:
                 "strategy_pattern": strategy_pattern,
                 "strategy_hint": state["strategy_hint"],
                 "strategy_stats": self._strategy_snapshot(),
+                "repair_applied": repair_applied,
+                "original_step": original_step_payload,
+                "repaired_step": repaired_step_payload,
             }
             self.memory.save(record)
             self._log_event(
@@ -465,6 +521,18 @@ class LoopController:
 
             if decision == "adjust_plan":
                 self._apply_step_adjustment(plan, state)
+
+            if decision == "repair_step":
+                self._log_event(
+                    event="step_repaired",
+                    iteration_id=iteration_id,
+                    input_payload={
+                        "original_step": original_step_payload,
+                        "repaired_step": repaired_step_payload,
+                    },
+                    output_payload={"repair_applied": repair_applied},
+                    decision="repeat",
+                )
 
             if failures >= self.failure_threshold:
                 self._log_event(
@@ -687,6 +755,10 @@ class LoopController:
         if error_type in {"policy_violation", "security_violation"}:
             return "escalate"
 
+        current_failures = self._current_step_failure_count(state)
+        if current_failures >= self.step_failure_threshold:
+            return "repair_step"
+
         return self._select_best_decision(state, classification, context)
 
     def _select_best_decision(
@@ -732,8 +804,10 @@ class LoopController:
         prior = {
             "retry_same": 0.60,
             "adjust_plan": 0.55,
+            "repair_step": 0.58,
             "abort": 0.20,
             "escalate": 0.10,
+            "advance_step": 0.90,
         }[decision]
 
         attempts_penalty = min(attempts * 0.02, 0.20)
@@ -748,10 +822,12 @@ class LoopController:
 
     def _decision_rank(self, decision: Decision) -> int:
         order = {
+            "repair_step": 0,
             "adjust_plan": 0,
             "retry_same": 1,
             "abort": 2,
             "escalate": 3,
+            "advance_step": 4,
         }
         return order[decision]
 
@@ -794,7 +870,14 @@ class LoopController:
                 pattern = str(classification.get("error_type", "none"))
 
             decision = str(record.get("decision", ""))
-            if decision not in {"retry_same", "adjust_plan", "abort", "escalate"}:
+            if decision not in {
+                "retry_same",
+                "adjust_plan",
+                "repair_step",
+                "abort",
+                "escalate",
+                "advance_step",
+            }:
                 continue
 
             success = bool(record.get("success", False))
@@ -864,7 +947,12 @@ class LoopController:
         if success:
             return min(2.0, current + 0.10)
 
-        penalty = 0.20 if decision == "retry_same" else 0.10
+        if decision == "retry_same":
+            penalty = 0.20
+        elif decision == "repair_step":
+            penalty = 0.05
+        else:
+            penalty = 0.10
         return max(0.10, current - penalty)
 
     def _strategy_snapshot(self) -> list[dict[str, Any]]:
@@ -888,6 +976,8 @@ class LoopController:
         pattern = str(classification.get("error_type", "runtime_error"))
         if decision == "adjust_plan":
             return f"avoid_previous_plan_pattern:{pattern}"
+        if decision == "repair_step":
+            return f"repair_current_step:{pattern}"
         if decision == "advance_step":
             return "advance_to_next_step"
         if decision == "retry_same":
@@ -895,6 +985,90 @@ class LoopController:
         if decision == "escalate":
             return f"escalate_issue:{pattern}"
         return "finalize_goal"
+
+    def _current_step_failure_count(self, state: dict[str, Any]) -> int:
+        plan = state.get("active_plan")
+        current_step_id = "unknown_step"
+        if isinstance(plan, dict):
+            step = self._current_step(plan)
+            if isinstance(step, dict):
+                current_step_id = str(step.get("id", "unknown_step"))
+
+        failures = state.get("current_step_failures")
+        if not isinstance(failures, dict):
+            return 0
+        return int(failures.get(current_step_id, 0))
+
+    def _repair_step(
+        self,
+        step: dict[str, Any] | None,
+        state: dict[str, Any],
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        active_plan = state.get("active_plan")
+        current_index = 0
+        if isinstance(active_plan, dict):
+            current_index = int(active_plan.get("current_step", 0))
+
+        base_step = self._normalize_step(step or {}, current_index)
+
+        if hasattr(self.planner, "repair_step"):
+            planner_repair = getattr(self.planner, "repair_step")
+            if callable(planner_repair):
+                try:
+                    repaired_candidate = planner_repair(base_step, state, context)
+                except TypeError:
+                    repaired_candidate = planner_repair(base_step, state)
+
+                normalized = self._normalize_repair_candidate(
+                    repaired_candidate,
+                    current_index=current_index,
+                    fallback_step=base_step,
+                )
+                if normalized is not None:
+                    return normalized
+
+        fallback_plan = self._create_plan(state, context)
+        normalized_plan = self._normalize_step_plan(
+            fallback_plan,
+            fallback=active_plan if isinstance(active_plan, dict) else None,
+        )
+        fallback_step = self._current_step(normalized_plan)
+        if isinstance(fallback_step, dict):
+            return fallback_step
+        return self._normalize_step(base_step, current_index)
+
+    def _normalize_repair_candidate(
+        self,
+        repaired_candidate: Any,
+        *,
+        current_index: int,
+        fallback_step: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if isinstance(repaired_candidate, dict) and isinstance(repaired_candidate.get("steps"), list):
+            normalized_plan = self._normalize_step_plan(repaired_candidate)
+            steps = normalized_plan.get("steps", [])
+            if 0 <= current_index < len(steps):
+                step = steps[current_index]
+                if isinstance(step, dict):
+                    return step
+
+        if isinstance(repaired_candidate, dict):
+            return self._normalize_step(repaired_candidate, current_index)
+
+        if repaired_candidate is not None:
+            return self._normalize_step({"action": str(repaired_candidate)}, current_index)
+
+        return self._normalize_step(fallback_step, current_index)
+
+    def _replace_current_step(self, plan: dict[str, Any], repaired_step: dict[str, Any]) -> None:
+        steps = plan.get("steps")
+        if not isinstance(steps, list):
+            return
+        index = int(plan.get("current_step", 0))
+        if index < 0 or index >= len(steps):
+            return
+        steps[index] = self._normalize_step(repaired_step, index)
 
     def _log_event(
         self,
@@ -963,6 +1137,7 @@ def build_default_loop_controller(
     *,
     max_iterations: int = 10,
     failure_threshold: int = 3,
+    step_failure_threshold: int = 2,
     memory_store: MemoryStore | None = None,
     clock: Callable[[], datetime] | None = None,
 ) -> LoopController:
@@ -976,5 +1151,6 @@ def build_default_loop_controller(
         memory=memory,
         max_iterations=max_iterations,
         failure_threshold=failure_threshold,
+        step_failure_threshold=step_failure_threshold,
         clock=clock,
     )

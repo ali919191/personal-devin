@@ -35,6 +35,23 @@ class MultiStepPlanner:
         }
 
 
+class RepairingPlanner(MultiStepPlanner):
+    def __init__(self):
+        self.repair_calls = []
+
+    def repair_step(self, step, state, context=None):
+        self.repair_calls.append({"step": dict(step), "state": dict(state)})
+        repaired = dict(step)
+        repaired["action"] = f"{step['action']} [repaired]"
+        metadata = repaired.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+        metadata = dict(metadata)
+        metadata["repair_source"] = "planner"
+        repaired["metadata"] = metadata
+        return repaired
+
+
 class MockExecutor:
     def __init__(self, succeed_on=2):
         self.counter = 0
@@ -298,3 +315,38 @@ def test_loop_tracks_current_step_failures():
     assert memory.data[1]["current_step"]["id"] == "s1"
     assert memory.data[1]["decision"] == "advance_step"
     assert memory.data[2]["current_step"]["id"] == "s2"
+
+
+def test_loop_repairs_failing_step_without_resetting_plan():
+    planner = RepairingPlanner()
+    memory = MockMemory()
+    controller = LoopController(
+        planner=planner,
+        executor=SequenceExecutor(
+            [
+                {"success": False, "error_type": "runtime_error", "retryable": True},
+                {"success": False, "error_type": "runtime_error", "retryable": True},
+                {"success": True},
+                {"success": True},
+            ]
+        ),
+        memory=memory,
+        max_iterations=8,
+        failure_threshold=6,
+        step_failure_threshold=2,
+    )
+
+    result = controller.run("test goal")
+
+    assert result["status"] == "success"
+    assert len(planner.repair_calls) >= 1
+
+    repair_record = memory.data[1]
+    assert repair_record["decision"] == "repair_step"
+    assert repair_record["repair_applied"] is True
+    assert repair_record["original_step"]["id"] == "s1"
+    assert "[repaired]" in repair_record["repaired_step"]["action"]
+
+    # Ensure we preserved the remaining plan structure and did not reset step 2.
+    assert repair_record["plan"]["steps"][1]["id"] == "s2"
+    assert repair_record["plan"]["steps"][1]["action"] == "apply changes"
