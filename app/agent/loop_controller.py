@@ -14,6 +14,9 @@ from app.core.logger import get_logger
 from app.execution.hooks.execution_hooks import execute_with_policy
 from app.execution.policy.execution_policy import ExecutionPolicy
 from app.execution.runner import run_plan
+from app.improvement.engine import ImprovementEngine
+from app.improvement.models import ImprovementPlan
+from app.improvement.validator import ImprovementValidator
 from app.memory.memory_store import MemoryStore
 from app.planning.planner import build_execution_plan
 
@@ -48,6 +51,13 @@ class MemoryProtocol(Protocol):
 
     def retrieve(self, goal: str) -> dict[str, Any]:
         """Retrieve deterministic memory context for a goal."""
+
+
+class ImprovementApplierProtocol(Protocol):
+    """Applies validated self-improvement plans."""
+
+    def __call__(self, plan: ImprovementPlan) -> None:
+        """Apply a validated improvement plan."""
 
 
 class PlanningEngine:
@@ -280,6 +290,10 @@ class LoopController:
         failure_threshold: int = 3,
         step_failure_threshold: int = 2,
         clock: Callable[[], datetime] | None = None,
+        self_improvement_enabled: bool = False,
+        improvement_engine: ImprovementEngine | None = None,
+        improvement_validator: ImprovementValidator | None = None,
+        improvement_applier: ImprovementApplierProtocol | None = None,
     ):
         self.planner = planner
         self.executor = executor
@@ -290,6 +304,10 @@ class LoopController:
         self._clock = clock or (lambda: datetime.now(UTC))
         self.logger = get_logger(__name__)
         self.strategy_stats: dict[str, dict[str, dict[str, float | int]]] = {}
+        self._self_improvement_enabled = self_improvement_enabled
+        self._improvement_engine = improvement_engine or ImprovementEngine()
+        self._improvement_validator = improvement_validator or ImprovementValidator()
+        self._improvement_applier = improvement_applier
 
     def run(self, goal: str) -> dict[str, Any]:
         iteration = 0
@@ -378,6 +396,9 @@ class LoopController:
                 output_payload=classification,
                 decision="persist_memory",
             )
+
+            if self._self_improvement_enabled:
+                self._run_self_improvement(iteration_id=iteration_id, state=state)
 
             strategy_pattern = str(classification.get("error_type", "none"))
             if success:
@@ -1061,6 +1082,43 @@ class LoopController:
 
         return self._normalize_step(fallback_step, current_index)
 
+    def _run_self_improvement(self, iteration_id: str, state: dict[str, Any]) -> None:
+        try:
+            plan = self._improvement_engine.run(self.memory)
+            validated_plan = self._improvement_validator.validate(plan)
+            self._apply_improvements(validated_plan)
+            state["latest_improvement_plan"] = self._safe_payload(
+                {
+                    "version": validated_plan.version,
+                    "actions": [action.change for action in validated_plan.actions],
+                    "rejected_actions": [action.change for action in validated_plan.rejected_actions],
+                }
+            )
+            self._log_event(
+                event="self_improvement_applied",
+                iteration_id=iteration_id,
+                input_payload={"enabled": True},
+                output_payload={
+                    "plan_version": validated_plan.version,
+                    "applied": len(validated_plan.actions),
+                    "rejected": len(validated_plan.rejected_actions),
+                },
+                decision="continue",
+            )
+        except Exception as exc:  # noqa: BLE001
+            self._log_event(
+                event="self_improvement_applied",
+                iteration_id=iteration_id,
+                input_payload={"enabled": True},
+                output_payload={"result": "rejected", "error": str(exc)},
+                decision="continue",
+            )
+
+    def _apply_improvements(self, plan: ImprovementPlan) -> None:
+        if self._improvement_applier is None:
+            return
+        self._improvement_applier(plan)
+
     def _replace_current_step(self, plan: dict[str, Any], repaired_step: dict[str, Any]) -> None:
         steps = plan.get("steps")
         if not isinstance(steps, list):
@@ -1140,6 +1198,7 @@ def build_default_loop_controller(
     step_failure_threshold: int = 2,
     memory_store: MemoryStore | None = None,
     clock: Callable[[], datetime] | None = None,
+    self_improvement_enabled: bool = False,
 ) -> LoopController:
     """Create a LoopController wired to existing planning/execution/memory layers."""
     planner = PlanningEngine()
@@ -1153,4 +1212,5 @@ def build_default_loop_controller(
         failure_threshold=failure_threshold,
         step_failure_threshold=step_failure_threshold,
         clock=clock,
+        self_improvement_enabled=self_improvement_enabled,
     )

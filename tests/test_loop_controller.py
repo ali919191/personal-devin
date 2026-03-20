@@ -1,4 +1,5 @@
 from app.agent.loop_controller import LoopController
+from app.improvement.models import AnalysisSummary, ImprovementAction, ImprovementPlan
 
 
 class MockPlanner:
@@ -92,6 +93,36 @@ class MockMemory:
             "recent_failures": [item for item in self.data if not item.get("success", False)],
             "attempt_count": len(self.data),
         }
+
+
+class StubImprovementEngine:
+    def __init__(self):
+        self.calls = 0
+
+    def run(self, memory):
+        _ = memory
+        self.calls += 1
+        return ImprovementPlan(
+            version="agent-33-v1",
+            analysis=AnalysisSummary(
+                total_executions=1,
+                failure_rate=1.0,
+                retry_patterns={"s1": 1},
+                step_latency={"s1": 1000.0},
+                common_failure_points=["s1"],
+                common_failure_counts={"s1": 1},
+                tool_misuse_patterns={},
+            ),
+            patterns=[],
+            actions=[
+                ImprovementAction(
+                    target="execution.retry_limit",
+                    change="decrease_retry_limit_by_one",
+                    reason="test",
+                    source_signal="repeated_failure",
+                )
+            ],
+        )
 
 
 def test_loop_success():
@@ -350,3 +381,26 @@ def test_loop_repairs_failing_step_without_resetting_plan():
     # Ensure we preserved the remaining plan structure and did not reset step 2.
     assert repair_record["plan"]["steps"][1]["id"] == "s2"
     assert repair_record["plan"]["steps"][1]["action"] == "apply changes"
+
+
+def test_loop_runs_self_improvement_when_enabled() -> None:
+    planner = MockPlanner()
+    memory = MockMemory()
+    improvement_engine = StubImprovementEngine()
+    applied_plans: list[ImprovementPlan] = []
+
+    controller = LoopController(
+        planner=planner,
+        executor=SequenceExecutor([{"success": True}]),
+        memory=memory,
+        max_iterations=3,
+        self_improvement_enabled=True,
+        improvement_engine=improvement_engine,
+        improvement_applier=lambda plan: applied_plans.append(plan),
+    )
+
+    result = controller.run("test goal")
+
+    assert result["status"] == "success"
+    assert improvement_engine.calls == 1
+    assert len(applied_plans) == 1

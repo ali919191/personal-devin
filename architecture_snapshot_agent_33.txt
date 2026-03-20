@@ -1,0 +1,286 @@
+.
+|-- app
+|   |-- adaptation
+|   |   |-- engine.py
+|   |   |-- __init__.py
+|   |   |-- models.py
+|   |   |-- policies.py
+|   |   |-- __pycache__
+|   |   `-- registry.py
+|   |-- agent
+|   |   |-- agent_loop.py
+|   |   |-- __init__.py
+|   |   |-- logger.py
+|   |   |-- loop_controller.py
+|   |   |-- loop_state.py
+|   |   |-- __pycache__
+|   |   |-- retry.py
+|   |   |-- schemas.py
+|   |   `-- self_improvement.py
+|   |-- analysis
+|   |   |-- analyzer.py
+|   |   |-- __init__.py
+|   |   |-- models.py
+|   |   |-- pattern_detector.py
+|   |   |-- __pycache__
+|   |   |-- recommendation_engine.py
+|   |   `-- registry.py
+|   |-- context
+|   |   |-- adapters
+|   |   |-- exceptions.py
+|   |   |-- __init__.py
+|   |   |-- models.py
+|   |   |-- __pycache__
+|   |   |-- service.py
+|   |   `-- validator.py
+|   |-- core
+|   |   |-- deployment_context.py
+|   |   |-- __init__.py
+|   |   |-- logger.py
+|   |   |-- orchestrator.py
+|   |   |-- __pycache__
+|   |   |-- recovery.py
+|   |   `-- state.py
+|   |-- deployment
+|   |   |-- context_injector.py
+|   |   |-- deployment_context.py
+|   |   |-- environment_resolver.py
+|   |   |-- __init__.py
+|   |   |-- models.py
+|   |   |-- orchestrator.py
+|   |   |-- providers
+|   |   `-- __pycache__
+|   |-- evaluation
+|   |   |-- evaluator.py
+|   |   |-- __init__.py
+|   |   |-- models.py
+|   |   |-- __pycache__
+|   |   `-- service.py
+|   |-- execution
+|   |   |-- audit
+|   |   |-- executor.py
+|   |   |-- hooks
+|   |   |-- __init__.py
+|   |   |-- logger.py
+|   |   |-- models.py
+|   |   |-- policy
+|   |   |-- __pycache__
+|   |   |-- runner.py
+|   |   `-- sandbox.py
+|   |-- feedback
+|   |   |-- engine.py
+|   |   |-- __init__.py
+|   |   |-- models.py
+|   |   `-- __pycache__
+|   |-- improvement
+|   |   |-- analyzer.py
+|   |   |-- engine.py
+|   |   |-- __init__.py
+|   |   |-- models.py
+|   |   |-- optimizer.py
+|   |   |-- pattern_detector.py
+|   |   |-- __pycache__
+|   |   |-- registry.py
+|   |   `-- validator.py
+|   |-- infrastructure
+|   |   |-- base.py
+|   |   |-- factory.py
+|   |   |-- __init__.py
+|   |   |-- providers
+|   |   `-- __pycache__
+|   |-- __init__.py
+|   |-- integrations
+|   |   |-- base.py
+|   |   |-- exceptions.py
+|   |   |-- __init__.py
+|   |   |-- manager.py
+|   |   |-- models.py
+|   |   |-- providers
+|   |   |-- __pycache__
+|   |   `-- registry.py
+|   |-- memory
+|   |   |-- feedback_engine.py
+|   |   |-- __init__.py
+|   |   |-- memory_store.py
+|   |   |-- models.py
+|   |   |-- __pycache__
+|   |   |-- repository.py
+|   |   |-- serializer.py
+|   |   `-- service.py
+|   |-- orchestration
+|   |   |-- __init__.py
+|   |   |-- models.py
+|   |   |-- orchestrator.py
+|   |   |-- __pycache__
+|   |   `-- registry.py
+|   |-- planning
+|   |   |-- conflict_resolver.py
+|   |   |-- graph.py
+|   |   |-- __init__.py
+|   |   |-- models.py
+|   |   |-- planner.py
+|   |   |-- policy.py
+|   |   |-- __pycache__
+|   |   |-- task_decomposer.py
+|   |   |-- task_graph.py
+|   |   `-- validator.py
+|   |-- prompts
+|   |   `-- context
+|   |-- __pycache__
+|   |   `-- __init__.cpython-313.pyc
+|   `-- self_improvement
+|       |-- adaptation_engine.py
+|       |-- analyzer.py
+|       |-- engine.py
+|       |-- evaluator.py
+|       |-- handlers.py
+|       |-- __init__.py
+|       |-- logger.py
+|       |-- loop.py
+|       |-- models.py
+|       |-- optimizer.py
+|       |-- pattern_detector.py
+|       |-- policy.py
+|       `-- __pycache__
+|-- architecture_snapshot_agent_33.txt
+|-- pytest.ini
+|-- README.md
+|-- requirements.txt
+|-- tests
+|   |-- context
+|   |   |-- __init__.py
+|   |   |-- __pycache__
+|   |   `-- test_context_engine.py
+|   |-- core
+|   |   |-- __init__.py
+|   |   |-- __pycache__
+|   |   |-- test_orchestrator.py
+|   |   |-- test_recovery.py
+|   |   `-- test_state_machine.py
+|   |-- deployment
+|   |   |-- __init__.py
+|   |   |-- __pycache__
+|   |   |-- test_context_injector.py
+|   |   |-- test_deployment_orchestrator.py
+|   |   |-- test_environment_resolver.py
+|   |   `-- test_orchestrator.py
+|   |-- e2e
+|   |   |-- __init__.py
+|   |   |-- __pycache__
+|   |   `-- test_full_agent_cycle.py
+|   |-- evaluation
+|   |   |-- __init__.py
+|   |   |-- __pycache__
+|   |   |-- test_evaluator.py
+|   |   `-- test_service.py
+|   |-- execution
+|   |   |-- __pycache__
+|   |   |-- test_audit_logger.py
+|   |   |-- test_execution_hooks.py
+|   |   |-- test_execution_policy.py
+|   |   `-- test_sandbox.py
+|   |-- feedback
+|   |   |-- __init__.py
+|   |   |-- __pycache__
+|   |   `-- test_feedback_engine.py
+|   |-- improvement
+|   |   |-- __pycache__
+|   |   |-- test_analyzer.py
+|   |   |-- test_engine.py
+|   |   |-- test_optimizer.py
+|   |   |-- test_pattern_detector.py
+|   |   `-- test_validator.py
+|   |-- infrastructure
+|   |   |-- __init__.py
+|   |   |-- __pycache__
+|   |   |-- test_factory.py
+|   |   `-- test_providers.py
+|   |-- __init__.py
+|   |-- integrations
+|   |   |-- __init__.py
+|   |   |-- __pycache__
+|   |   |-- test_manager.py
+|   |   |-- test_providers.py
+|   |   `-- test_registry.py
+|   |-- memory
+|   |   |-- __init__.py
+|   |   |-- __pycache__
+|   |   |-- test_feedback_engine.py
+|   |   `-- test_memory_feedback_integration.py
+|   |-- planning
+|   |   |-- __init__.py
+|   |   |-- __pycache__
+|   |   `-- test_conflict_resolver.py
+|   |-- __pycache__
+|   |   |-- __init__.cpython-313.pyc
+|   |   |-- test_adaptation_engine.cpython-313-pytest-9.0.2.pyc
+|   |   |-- test_agent_loop.cpython-313-pytest-9.0.2.pyc
+|   |   |-- test_analysis_engine.cpython-313-pytest-9.0.2.pyc
+|   |   |-- test_basic.cpython-313-pytest-9.0.2.pyc
+|   |   |-- test_execution_engine.cpython-313-pytest-9.0.2.pyc
+|   |   |-- test_graph.cpython-313-pytest-9.0.2.pyc
+|   |   |-- test_improvement_engine.cpython-313-pytest-9.0.2.pyc
+|   |   |-- test_integrations_control.cpython-313-pytest-9.0.2.pyc
+|   |   |-- test_integrations.cpython-313-pytest-9.0.2.pyc
+|   |   |-- test_loop_controller.cpython-313-pytest-9.0.2.pyc
+|   |   |-- test_memory_system.cpython-313-pytest-9.0.2.pyc
+|   |   |-- test_orchestration_engine.cpython-313-pytest-9.0.2.pyc
+|   |   |-- test_planner.cpython-313-pytest-9.0.2.pyc
+|   |   |-- test_self_improvement.cpython-313-pytest-9.0.2.pyc
+|   |   |-- test_task_decomposer.cpython-313-pytest-9.0.2.pyc
+|   |   `-- test_validator.cpython-313-pytest-9.0.2.pyc
+|   |-- self_improvement
+|   |   |-- __init__.py
+|   |   |-- __pycache__
+|   |   |-- test_adaptation_engine.py
+|   |   |-- test_analyzer.py
+|   |   |-- test_loop.py
+|   |   |-- test_pattern_detector.py
+|   |   `-- test_policy.py
+|   |-- test_adaptation_engine.py
+|   |-- test_agent_loop.py
+|   |-- test_analysis_engine.py
+|   |-- test_basic.py
+|   |-- test_execution_engine.py
+|   |-- test_graph.py
+|   |-- test_improvement_engine.py
+|   |-- test_loop_controller.py
+|   |-- test_memory_system.py
+|   |-- test_orchestration_engine.py
+|   |-- test_planner.py
+|   |-- test_self_improvement.py
+|   |-- test_task_decomposer.py
+|   `-- test_validator.py
+`-- tmp
+    |-- observation_batch2_failure_injection
+    |   |-- decisions.json
+    |   |-- executions.json
+    |   |-- failures.json
+    |   `-- tasks.json
+    |-- observation_batch3_structural_variation
+    |   |-- decisions.json
+    |   |-- executions.json
+    |   |-- failures.json
+    |   `-- tasks.json
+    |-- observation_phase_runs
+    |   |-- decisions.json
+    |   |-- executions.json
+    |   |-- failures.json
+    |   `-- tasks.json
+    |-- self_improvement_idempotency
+    |   |-- decisions.json
+    |   |-- executions.json
+    |   |-- failures.json
+    |   `-- tasks.json
+    |-- self_improvement_isolation
+    |   |-- decisions.json
+    |   |-- executions.json
+    |   |-- failures.json
+    |   `-- tasks.json
+    `-- self_improvement_payload
+        |-- decisions.json
+        |-- executions.json
+        |-- failures.json
+        `-- tasks.json
+
+79 directories, 205 files
