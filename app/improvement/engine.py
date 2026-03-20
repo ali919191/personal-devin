@@ -8,9 +8,11 @@ from app.core.logger import get_logger
 from app.improvement.analyzer import ExecutionAnalyzer
 from app.improvement.models import (
     ImprovementAction,
+    ImprovementMetrics,
     ImprovementPlan,
     ImprovementRecord,
     ImprovementResult,
+    RollbackAction,
     SignalRecord,
 )
 from app.improvement.optimizer import Optimizer
@@ -22,6 +24,12 @@ logger = get_logger(__name__)
 
 class ImprovementEngine:
     """Deterministic self-improvement pipeline for Agent 33."""
+
+    # Acceptance threshold: improvements must improve by at least 5% to be accepted
+    MIN_IMPROVEMENT_DELTA = 0.05
+
+    # Cooldown: enforce minimum 3 improvement cycles between applications
+    COOLDOWN_CYCLES = 3
 
     _SIGNAL_ACTIONS: dict[str, tuple[str, str, str]] = {
         "low_success_rate": (
@@ -56,6 +64,9 @@ class ImprovementEngine:
         self._clock = clock or (lambda: datetime.now(UTC))
 
     def run(self, memory: Any) -> ImprovementPlan:
+        # Check cooldown before proceeding with improvements
+        is_on_cooldown = self._is_on_cooldown(memory)
+
         history_before = self._read_execution_history(memory)
         metrics_before = self._compute_metrics(history_before)
 
@@ -64,14 +75,17 @@ class ImprovementEngine:
         proposed_actions = self._optimizer.generate(patterns)
 
         plan = ImprovementPlan(
-            version="agent-33-v2",
+            version="agent-33-v3",
             analysis=analysis,
             patterns=patterns,
             actions=proposed_actions,
         )
         validated_plan = self._validator.validate(plan)
 
-        for idx, action in enumerate(validated_plan.actions, start=1):
+        # Only apply improvements if NOT on cooldown
+        actions_to_apply = [] if is_on_cooldown else validated_plan.actions
+
+        for idx, action in enumerate(actions_to_apply, start=1):
             self._log_application(action=action, result="success")
             self._write_memory_event(
                 memory,
@@ -101,24 +115,47 @@ class ImprovementEngine:
                 },
             )
 
+        if is_on_cooldown:
+            self._write_memory_event(
+                memory,
+                {
+                    "event": "improvement_cooldown_active",
+                    "cycles_remaining": self.COOLDOWN_CYCLES,
+                },
+            )
+
         history_after = self._read_execution_history(memory)
         metrics_after = self._compute_metrics(history_after)
         impact_score = self._compute_impact_score(metrics_before=metrics_before, metrics_after=metrics_after)
+
+        # Determine if improvement accepted based on threshold
+        accepted = self._should_accept_improvement(impact_score) and len(actions_to_apply) > 0
+
+        # Build rollback actions for applied improvements
+        rollback_actions = self._build_rollback_actions(actions_to_apply, self._next_improvement_version(memory))
+
         impact_result = ImprovementResult(
             action_type="self_improvement_run",
-            status="applied" if len(validated_plan.actions) > 0 else "noop",
-            success=impact_score > 0.0,
+            status="applied" if len(actions_to_apply) > 0 else "cooldown" if is_on_cooldown else "noop",
+            success=accepted,
             impact_score=impact_score,
             metrics_before=metrics_before,
             metrics_after=metrics_after,
+            rollback_applied=False,
         )
 
         improvement_record = self._build_improvement_record(
             memory=memory,
             patterns=validated_plan.patterns,
-            actions=validated_plan.actions,
+            actions=actions_to_apply,
             result=impact_result.status,
+            metrics_before=metrics_before,
+            metrics_after=metrics_after,
+            impact_score=impact_score,
+            accepted=accepted,
+            rollback_actions=rollback_actions,
         )
+
         self._write_memory_event(
             memory,
             {
@@ -129,6 +166,11 @@ class ImprovementEngine:
                 "result": improvement_record.result,
                 "patterns": [asdict(pattern) for pattern in improvement_record.patterns],
                 "actions": [asdict(action) for action in improvement_record.actions],
+                "accepted": improvement_record.accepted,
+                "impact_score": improvement_record.impact_score,
+                "metrics_before": asdict(metrics_before),
+                "metrics_after": asdict(metrics_after),
+                "rollback_actions": [asdict(rb) for rb in rollback_actions],
                 "impact": asdict(impact_result),
             },
         )
@@ -137,7 +179,7 @@ class ImprovementEngine:
             version=validated_plan.version,
             analysis=validated_plan.analysis,
             patterns=validated_plan.patterns,
-            actions=validated_plan.actions,
+            actions=actions_to_apply,
             rejected_actions=validated_plan.rejected_actions,
             record=improvement_record,
         )
@@ -162,6 +204,14 @@ class ImprovementEngine:
         approved, rejected = self._validator.validate_actions(normalized_actions)
         results: list[ImprovementResult] = []
 
+        # Empty metrics for legacy apply() method (no before/after available)
+        empty_metrics = ImprovementMetrics(
+            success_rate=0.0,
+            failure_rate=0.0,
+            avg_step_latency=0.0,
+            retry_rate=0.0,
+        )
+
         for action in approved:
             results.append(
                 ImprovementResult(
@@ -170,6 +220,8 @@ class ImprovementEngine:
                     target=action.target,
                     change=action.change,
                     reason=action.reason,
+                    metrics_before=empty_metrics,
+                    metrics_after=empty_metrics,
                 )
             )
 
@@ -181,6 +233,8 @@ class ImprovementEngine:
                     target=action.target,
                     change=action.change,
                     reason=action.reason,
+                    metrics_before=empty_metrics,
+                    metrics_after=empty_metrics,
                 )
             )
 
@@ -209,16 +263,15 @@ class ImprovementEngine:
             source_signal=action.source_signal,
         )
 
-    def _compute_metrics(self, records: list[dict[str, Any]]) -> dict[str, float]:
+    def _compute_metrics(self, records: list[dict[str, Any]]) -> ImprovementMetrics:
         total = len(records)
         if total <= 0:
-            return {
-                "total_executions": 0.0,
-                "success_rate": 0.0,
-                "failure_rate": 0.0,
-                "avg_latency_ms": 0.0,
-                "retry_rate": 0.0,
-            }
+            return ImprovementMetrics(
+                success_rate=0.0,
+                failure_rate=0.0,
+                avg_step_latency=0.0,
+                retry_rate=0.0,
+            )
 
         success_count = 0
         failure_count = 0
@@ -239,24 +292,23 @@ class ImprovementEngine:
                 latency_values.append(latency)
 
         avg_latency = round(sum(latency_values) / len(latency_values), 3) if latency_values else 0.0
-        return {
-            "total_executions": float(total),
-            "success_rate": round(success_count / total, 4),
-            "failure_rate": round(failure_count / total, 4),
-            "avg_latency_ms": avg_latency,
-            "retry_rate": round(retry_count / total, 4),
-        }
+        return ImprovementMetrics(
+            success_rate=round(success_count / total, 4),
+            failure_rate=round(failure_count / total, 4),
+            avg_step_latency=avg_latency,
+            retry_rate=round(retry_count / total, 4),
+        )
 
     def _compute_impact_score(
         self,
         *,
-        metrics_before: dict[str, float],
-        metrics_after: dict[str, float],
+        metrics_before: ImprovementMetrics,
+        metrics_after: ImprovementMetrics,
     ) -> float:
-        success_delta = metrics_after.get("success_rate", 0.0) - metrics_before.get("success_rate", 0.0)
-        failure_delta = metrics_before.get("failure_rate", 0.0) - metrics_after.get("failure_rate", 0.0)
-        latency_before = metrics_before.get("avg_latency_ms", 0.0)
-        latency_after = metrics_after.get("avg_latency_ms", 0.0)
+        success_delta = metrics_after.success_rate - metrics_before.success_rate
+        failure_delta = metrics_before.failure_rate - metrics_after.failure_rate
+        latency_before = metrics_before.avg_step_latency
+        latency_after = metrics_after.avg_step_latency
         latency_delta = 0.0
         if latency_before > 0:
             latency_delta = (latency_before - latency_after) / latency_before
@@ -271,6 +323,11 @@ class ImprovementEngine:
         patterns: list,
         actions: list,
         result: str,
+        metrics_before: ImprovementMetrics,
+        metrics_after: ImprovementMetrics,
+        impact_score: float,
+        accepted: bool,
+        rollback_actions: list[RollbackAction] | None = None,
     ) -> ImprovementRecord:
         version = self._next_improvement_version(memory)
         return ImprovementRecord(
@@ -280,6 +337,11 @@ class ImprovementEngine:
             actions=list(actions),
             result=result,
             version=version,
+            rollback_actions=rollback_actions or [],
+            metrics_before=metrics_before,
+            metrics_after=metrics_after,
+            impact_score=impact_score,
+            accepted=accepted,
         )
 
     def _next_improvement_version(self, memory: Any) -> int:
@@ -297,6 +359,64 @@ class ImprovementEngine:
             except Exception:  # noqa: BLE001
                 return 1
         return 1
+
+    def _is_on_cooldown(self, memory: Any) -> bool:
+        """Check if system is on cooldown from last improvement."""
+        if not hasattr(memory, "read_all"):
+            return False
+
+        try:
+            decision_records = memory.read_all("decision")
+            if not isinstance(decision_records, list):
+                return False
+
+            # Find all accepted improvements
+            accepted_improvements = [
+                record
+                for record in decision_records
+                if isinstance(record, dict)
+                and record.get("event") == "improvement_record"
+                and record.get("accepted") is True
+            ]
+
+            if not accepted_improvements:
+                return False
+
+            # Count records since last accepted improvement
+            last_accepted_idx = len(decision_records) - 1
+            for i in range(len(decision_records) - 1, -1, -1):
+                record = decision_records[i]
+                if (isinstance(record, dict) and record.get("event") == "improvement_record"
+                    and record.get("accepted") is True):
+                    last_accepted_idx = i
+                    break
+
+            cycles_since_last = len(decision_records) - last_accepted_idx - 1
+            return cycles_since_last < self.COOLDOWN_CYCLES
+
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _should_accept_improvement(self, impact_score: float) -> bool:
+        """Check if improvement meets acceptance threshold."""
+        return impact_score >= self.MIN_IMPROVEMENT_DELTA
+
+    def _build_rollback_actions(
+        self,
+        actions: list[ImprovementAction],
+        version: int,
+    ) -> list[RollbackAction]:
+        """Build rollback actions for potential reversal."""
+        rollbacks: list[RollbackAction] = []
+        for action in actions:
+            rollbacks.append(
+                RollbackAction(
+                    target=action.target,
+                    previous_value=f"reverted_from_v{version}",
+                    version=version,
+                )
+            )
+        return rollbacks
 
     def _is_success(self, record: dict[str, Any]) -> bool:
         if isinstance(record.get("success"), bool):

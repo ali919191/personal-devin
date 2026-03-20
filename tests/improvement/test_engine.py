@@ -54,18 +54,24 @@ def test_engine_generates_validated_plan_and_logs_events() -> None:
 
     plan = engine.run(memory)
 
-    assert plan.version == "agent-33-v2"
+    assert plan.version == "agent-33-v3"
     assert plan.record is not None
     assert plan.record.version == 1
     assert plan.record.id == "improvement-000001"
     assert len(plan.patterns) >= 1
     assert len(plan.actions) >= 1
     assert all(action.target != "core.contract" for action in plan.actions)
-    assert len(memory.decision_events) == len(plan.actions) + len(plan.rejected_actions) + 1
+    # Events: applied actions + rejected actions + improvement_record
+    expected_events = len(plan.actions) + len(plan.rejected_actions) + 1
+    # If on cooldown, add one more event
+    cooldown_events = 1 if engine._is_on_cooldown(memory) else 0
+    assert len(memory.decision_events) == expected_events + cooldown_events
     assert memory.decision_events[-1]["event"] == "improvement_record"
     assert "impact" in memory.decision_events[-1]
-    assert "metrics_before" in memory.decision_events[-1]["impact"]
-    assert "metrics_after" in memory.decision_events[-1]["impact"]
+    assert "metrics_before" in memory.decision_events[-1]
+    assert "metrics_after" in memory.decision_events[-1]
+    assert "rollback_actions" in memory.decision_events[-1]
+    assert "accepted" in memory.decision_events[-1]
 
 
 def test_engine_is_deterministic() -> None:
