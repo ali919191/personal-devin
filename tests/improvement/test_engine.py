@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from app.improvement.engine import ImprovementEngine
 
 
@@ -37,6 +39,8 @@ class StubMemory:
     def read_all(self, memory_type: str):
         if memory_type == "execution":
             return list(self.records)
+        if memory_type == "decision":
+            return list(self.decision_events)
         return []
 
     def append(self, memory_type: str, payload: dict) -> None:
@@ -50,16 +54,23 @@ def test_engine_generates_validated_plan_and_logs_events() -> None:
 
     plan = engine.run(memory)
 
-    assert plan.version == "agent-33-v1"
+    assert plan.version == "agent-33-v2"
+    assert plan.record is not None
+    assert plan.record.version == 1
+    assert plan.record.id == "improvement-000001"
     assert len(plan.patterns) >= 1
     assert len(plan.actions) >= 1
     assert all(action.target != "core.contract" for action in plan.actions)
-    assert len(memory.decision_events) == len(plan.actions) + len(plan.rejected_actions)
-    assert all(event["event"] == "self_improvement_applied" for event in memory.decision_events)
+    assert len(memory.decision_events) == len(plan.actions) + len(plan.rejected_actions) + 1
+    assert memory.decision_events[-1]["event"] == "improvement_record"
+    assert "impact" in memory.decision_events[-1]
+    assert "metrics_before" in memory.decision_events[-1]["impact"]
+    assert "metrics_after" in memory.decision_events[-1]["impact"]
 
 
 def test_engine_is_deterministic() -> None:
-    engine = ImprovementEngine()
+    fixed_time = datetime(2026, 1, 1, tzinfo=UTC)
+    engine = ImprovementEngine(clock=lambda: fixed_time)
     first_memory = StubMemory()
     second_memory = StubMemory()
 
@@ -67,3 +78,16 @@ def test_engine_is_deterministic() -> None:
     second = engine.run(second_memory)
 
     assert first == second
+
+
+def test_engine_versions_increment_from_history() -> None:
+    fixed_time = datetime(2026, 1, 1, tzinfo=UTC)
+    engine = ImprovementEngine(clock=lambda: fixed_time)
+    memory = StubMemory()
+    memory.decision_events.append({"event": "improvement_record", "version": 3})
+
+    plan = engine.run(memory)
+
+    assert plan.record is not None
+    assert plan.record.version == 4
+    assert plan.record.id == "improvement-000004"

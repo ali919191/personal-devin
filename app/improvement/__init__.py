@@ -4,6 +4,7 @@ from app.improvement.models import (
     AnalysisSummary,
     ImprovementAction,
     ImprovementPlan,
+    ImprovementRecord,
     ImprovementResult,
     Pattern,
     SignalRecord,
@@ -23,5 +24,6 @@ __all__ = [
     "Pattern",
     "ImprovementAction",
     "ImprovementPlan",
+    "ImprovementRecord",
     "ImprovementResult",
 ]

@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from datetime import datetime
 
 
 @dataclass(frozen=True)
@@ -43,12 +44,23 @@ class ImprovementAction:
 
 
 @dataclass(frozen=True)
+class ImprovementRecord:
+    id: str
+    timestamp: datetime
+    patterns: list[Pattern]
+    actions: list[ImprovementAction]
+    result: str
+    version: int
+
+
+@dataclass(frozen=True)
 class ImprovementPlan:
     version: str
     analysis: AnalysisSummary
     patterns: list[Pattern]
     actions: list[ImprovementAction]
     rejected_actions: list[ImprovementAction] = field(default_factory=list)
+    record: ImprovementRecord | None = None
 
 
 @dataclass
@@ -58,3 +70,7 @@ class ImprovementResult:
     target: str = ""
     change: str = ""
     reason: str = ""
+    success: bool | None = None
+    impact_score: float = 0.0
+    metrics_before: dict[str, float] = field(default_factory=dict)
+    metrics_after: dict[str, float] = field(default_factory=dict)
