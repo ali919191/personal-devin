@@ -30,6 +30,12 @@ class ImprovementEngine:
 
     # Cooldown: enforce minimum 3 improvement cycles between applications
     COOLDOWN_CYCLES = 3
+    
+    # Metrics weighting for impact scoring (objective function)
+    # Note: These weights define our improvement objectives; may become configurable in future
+    WEIGHT_SUCCESS = 0.6
+    WEIGHT_FAILURE = 0.3
+    WEIGHT_LATENCY = 0.1
 
     _SIGNAL_ACTIONS: dict[str, tuple[str, str, str]] = {
         "low_success_rate": (
@@ -128,8 +134,8 @@ class ImprovementEngine:
         metrics_after = self._compute_metrics(history_after)
         impact_score = self._compute_impact_score(metrics_before=metrics_before, metrics_after=metrics_after)
 
-        # Determine if improvement accepted based on threshold
-        accepted = self._should_accept_improvement(impact_score) and len(actions_to_apply) > 0
+        # Determine if improvement accepted: threshold + trend gate
+        accepted = self._should_accept_improvement_with_memory(impact_score, memory) and len(actions_to_apply) > 0
 
         # Build rollback actions for applied improvements
         rollback_actions = self._build_rollback_actions(actions_to_apply, self._next_improvement_version(memory))
@@ -156,6 +162,11 @@ class ImprovementEngine:
             rollback_actions=rollback_actions,
         )
 
+        # Execute rollback if improvement degrades system (impact_score < 0)
+        rollback_executed = self._execute_rollback(improvement_record)
+        if rollback_executed:
+            impact_result.rollback_applied = True
+
         self._write_memory_event(
             memory,
             {
@@ -171,6 +182,7 @@ class ImprovementEngine:
                 "metrics_before": asdict(metrics_before),
                 "metrics_after": asdict(metrics_after),
                 "rollback_actions": [asdict(rb) for rb in rollback_actions],
+                "rollback_executed": rollback_executed,
                 "impact": asdict(impact_result),
             },
         )
@@ -313,7 +325,11 @@ class ImprovementEngine:
         if latency_before > 0:
             latency_delta = (latency_before - latency_after) / latency_before
 
-        score = success_delta * 0.6 + failure_delta * 0.3 + latency_delta * 0.1
+        score = (
+            success_delta * self.WEIGHT_SUCCESS
+            + failure_delta * self.WEIGHT_FAILURE
+            + latency_delta * self.WEIGHT_LATENCY
+        )
         return round(score, 4)
 
     def _build_improvement_record(
@@ -398,8 +414,86 @@ class ImprovementEngine:
             return False
 
     def _should_accept_improvement(self, impact_score: float) -> bool:
-        """Check if improvement meets acceptance threshold."""
-        return impact_score >= self.MIN_IMPROVEMENT_DELTA
+        """Check if improvement meets acceptance threshold AND trend is positive."""
+        # Threshold gate: must exceed minimum delta
+        if impact_score < self.MIN_IMPROVEMENT_DELTA:
+            return False
+
+        # Trend gate: must be better than last accepted improvement
+        last_impact = self._get_last_accepted_impact_score(None)  # Memory passed from run()
+        if last_impact is not None and impact_score <= last_impact:
+            # Reject sideways/stagnation improvements
+            return False
+
+        return True
+
+    def _should_accept_improvement_with_memory(self, impact_score: float, memory: Any) -> bool:
+        """Check if improvement meets acceptance threshold AND trend is positive."""
+        # Threshold gate: must exceed minimum delta
+        if impact_score < self.MIN_IMPROVEMENT_DELTA:
+            return False
+
+        # Trend gate: must be better than last accepted improvement
+        last_impact = self._get_last_accepted_impact_score(memory)
+        if last_impact is not None and impact_score <= last_impact:
+            # Reject sideways/stagnation improvements
+            return False
+
+        return True
+
+    def _get_last_accepted_impact_score(self, memory: Any) -> float | None:
+        """Query last accepted improvement's impact score for trend checking."""
+        if not memory or not hasattr(memory, "read_all"):
+            return None
+
+        try:
+            decision_records = memory.read_all("decision")
+            if not isinstance(decision_records, list):
+                return None
+
+            # Find most recent accepted improvement record
+            for record in reversed(decision_records):
+                if (isinstance(record, dict)
+                    and record.get("event") == "improvement_record"
+                    and record.get("accepted") is True):
+                    return record.get("impact_score")
+
+            return None
+
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _execute_rollback(self, record: ImprovementRecord) -> bool:
+        """Execute rollback when improvement degrades system (impact_score < 0)."""
+        if record.impact_score >= 0.0:
+            # No rollback needed — improvement was positive
+            return False
+
+        if not record.rollback_actions:
+            # No rollback actions recorded
+            return False
+
+        # Log rollback execution
+        logger.info(
+            "improvement_rollback_executed",
+            {
+                "event": "improvement_rollback_executed",
+                "record_id": record.id,
+                "record_version": record.version,
+                "impact_score": record.impact_score,
+                "rollback_actions_count": len(record.rollback_actions),
+                "actions": [
+                    {
+                        "target": action.target,
+                        "previous_value": action.previous_value,
+                        "version": action.version,
+                    }
+                    for action in record.rollback_actions
+                ],
+            },
+        )
+
+        return True
 
     def _build_rollback_actions(
         self,

@@ -412,3 +412,256 @@ class TestIntegrationAllGaps:
         assert isinstance(metrics, ImprovementMetrics)
         assert abs(metrics.success_rate - 2.0 / 3.0) < 0.001
         assert abs(metrics.failure_rate - 1.0 / 3.0) < 0.001
+
+
+class TestRollbackExecution:
+    """Rollback execution when improvements degrade system."""
+
+    def test_rollback_executed_on_negative_impact(self):
+        """Rollback executed when impact_score < 0 (degradation)."""
+        from app.improvement.models import ImprovementAction, Pattern
+
+        fixed_time = datetime(2026, 1, 1, tzinfo=UTC)
+        engine = ImprovementEngine(clock=lambda: fixed_time)
+
+        patterns = [Pattern(type="test", location="test", frequency=0.5, severity="low")]
+        actions = [
+            ImprovementAction(target="planning.strategy", change="test_change", reason="test"),
+        ]
+        metrics = ImprovementMetrics(0.5, 0.5, 100.0, 0.1)
+
+        # Negative impact triggers rollback
+        record = ImprovementRecord(
+            id="test-001",
+            timestamp=fixed_time,
+            patterns=patterns,
+            actions=actions,
+            result="negative",
+            version=1,
+            rollback_actions=[
+                RollbackAction(target="planning.strategy", previous_value="original", version=1),
+            ],
+            metrics_before=metrics,
+            metrics_after=metrics,
+            impact_score=-0.05,  # Negative!
+            accepted=False,
+        )
+
+        rollback_executed = engine._execute_rollback(record)
+
+        # Rollback should be executed
+        assert rollback_executed is True
+
+    def test_no_rollback_on_positive_impact(self):
+        """No rollback when impact_score >= 0 (improvement maintained)."""
+        from app.improvement.models import ImprovementAction, Pattern
+
+        fixed_time = datetime(2026, 1, 1, tzinfo=UTC)
+        engine = ImprovementEngine(clock=lambda: fixed_time)
+
+        patterns = [Pattern(type="test", location="test", frequency=0.5, severity="low")]
+        actions = [
+            ImprovementAction(target="planning.strategy", change="test_change", reason="test"),
+        ]
+        metrics = ImprovementMetrics(0.5, 0.5, 100.0, 0.1)
+
+        # Positive impact, no rollback
+        record = ImprovementRecord(
+            id="test-001",
+            timestamp=fixed_time,
+            patterns=patterns,
+            actions=actions,
+            result="positive",
+            version=1,
+            rollback_actions=[
+                RollbackAction(target="planning.strategy", previous_value="original", version=1),
+            ],
+            metrics_before=metrics,
+            metrics_after=metrics,
+            impact_score=0.08,  # Positive!
+            accepted=True,
+        )
+
+        rollback_executed = engine._execute_rollback(record)
+
+        # Rollback should NOT be executed
+        assert rollback_executed is False
+
+    def test_no_rollback_without_actions(self):
+        """No rollback when no rollback_actions recorded."""
+        from app.improvement.models import Pattern
+
+        fixed_time = datetime(2026, 1, 1, tzinfo=UTC)
+        engine = ImprovementEngine(clock=lambda: fixed_time)
+
+        patterns = [Pattern(type="test", location="test", frequency=0.5, severity="low")]
+        metrics = ImprovementMetrics(0.5, 0.5, 100.0, 0.1)
+
+        record = ImprovementRecord(
+            id="test-001",
+            timestamp=fixed_time,
+            patterns=patterns,
+            actions=[],
+            result="noop",
+            version=1,
+            rollback_actions=[],  # No rollback actions!
+            metrics_before=metrics,
+            metrics_after=metrics,
+            impact_score=-0.1,  # Negative, but no actions to rollback
+            accepted=False,
+        )
+
+        rollback_executed = engine._execute_rollback(record)
+
+        # Rollback should NOT be executed
+        assert rollback_executed is False
+
+
+class TestTrendAwareAcceptance:
+    """Acceptance policy with trend checking (prevent stagnation)."""
+
+    def test_acceptance_rejects_sideways_improvement(self):
+        """Reject improvement that equals last improvement (sideways/stagnation)."""
+        engine = ImprovementEngine()
+
+        # Setup: previous accepted improvement with impact 0.08
+        decision_records = [
+            {
+                "event": "improvement_record",
+                "accepted": True,
+                "version": 1,
+                "impact_score": 0.08,
+            },
+        ]
+        memory = StubMemory(decision_records=decision_records)
+
+        # Current improvement: same impact as previous
+        impact_score = 0.08
+
+        # Should reject (no progress)
+        accepted = engine._should_accept_improvement_with_memory(impact_score, memory)
+        assert not accepted
+
+    def test_acceptance_accepts_improving_trend(self):
+        """Accept improvement that exceeds last improvement (positive trend)."""
+        engine = ImprovementEngine()
+
+        # Setup: previous accepted improvement with impact 0.06
+        decision_records = [
+            {
+                "event": "improvement_record",
+                "accepted": True,
+                "version": 1,
+                "impact_score": 0.06,
+            },
+        ]
+        memory = StubMemory(decision_records=decision_records)
+
+        # Current improvement: better than previous
+        impact_score = 0.09
+
+        # Should accept (trending up)
+        accepted = engine._should_accept_improvement_with_memory(impact_score, memory)
+        assert accepted
+
+    def test_acceptance_requires_both_threshold_and_trend(self):
+        """Must pass both threshold AND trend for acceptance."""
+        engine = ImprovementEngine()
+
+        # Setup: previous accepted improvement with impact 0.08
+        decision_records = [
+            {
+                "event": "improvement_record",
+                "accepted": True,
+                "version": 1,
+                "impact_score": 0.08,
+            },
+        ]
+        memory = StubMemory(decision_records=decision_records)
+
+        # Current improvement: exceeds trend but below threshold
+        impact_score = 0.04
+
+        # Should reject (below threshold)
+        accepted = engine._should_accept_improvement_with_memory(impact_score, memory)
+        assert not accepted
+
+    def test_acceptance_first_improvement_uses_threshold_only(self):
+        """First improvement only checked against threshold (no previous to trend against)."""
+        engine = ImprovementEngine()
+
+        # Setup: no previous improvements
+        memory = StubMemory(decision_records=[])
+
+        # Improvement barely meets threshold
+        impact_score = 0.05
+
+        # Should accept (no previous to compare, meets threshold)
+        accepted = engine._should_accept_improvement_with_memory(impact_score, memory)
+        assert accepted
+
+    def test_last_impact_score_retrieved_correctly(self):
+        """Correctly retrieves most recent accepted improvement's impact score."""
+        engine = ImprovementEngine()
+
+        # Setup: multiple improvements, need to find the LAST accepted one
+        decision_records = [
+            {
+                "event": "improvement_record",
+                "accepted": True,
+                "version": 1,
+                "impact_score": 0.05,
+            },
+            {"event": "some_other_event"},
+            {
+                "event": "improvement_record",
+                "accepted": True,
+                "version": 2,
+                "impact_score": 0.07,
+            },
+            {
+                "event": "improvement_record",
+                "accepted": False,  # Rejected, should skip
+                "version": 3,
+                "impact_score": 0.12,
+            },
+        ]
+        memory = StubMemory(decision_records=decision_records)
+
+        last_impact = engine._get_last_accepted_impact_score(memory)
+
+        # Should return 0.07 (most recent ACCEPTED improvement)
+        assert last_impact == 0.07
+
+    def test_metrics_weights_are_configurable_constants(self):
+        """Verify metrics weights are extracted to configurable constants."""
+        engine = ImprovementEngine()
+
+        # Verify the weights are on the engine
+        assert hasattr(engine, "WEIGHT_SUCCESS")
+        assert hasattr(engine, "WEIGHT_FAILURE")
+        assert hasattr(engine, "WEIGHT_LATENCY")
+
+        # Verify they sum to approximately 1.0 (objective function)
+        total_weight = engine.WEIGHT_SUCCESS + engine.WEIGHT_FAILURE + engine.WEIGHT_LATENCY
+        assert abs(total_weight - 1.0) < 0.001
+
+        # Verify they match the formula
+        metrics_before = ImprovementMetrics(0.5, 0.5, 100.0, 0.1)
+        metrics_after = ImprovementMetrics(0.6, 0.4, 95.0, 0.08)
+
+        impact = engine._compute_impact_score(metrics_before=metrics_before, metrics_after=metrics_after)
+
+        # Manual calculation with weights
+        success_delta = 0.6 - 0.5
+        failure_delta = 0.5 - 0.4
+        latency_delta = (100.0 - 95.0) / 100.0
+
+        expected = (
+            success_delta * engine.WEIGHT_SUCCESS
+            + failure_delta * engine.WEIGHT_FAILURE
+            + latency_delta * engine.WEIGHT_LATENCY
+        )
+        expected = round(expected, 4)
+
+        assert impact == expected
