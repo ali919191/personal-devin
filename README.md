@@ -278,6 +278,66 @@ Output:
 ```
 Ordered tasks:
   design: Design the schema
+
+## Agent 33 - Self-Improvement Engine
+
+### What was built
+
+- A deterministic self-improvement module in app/improvement with explicit stages:
+  - ExecutionAnalyzer
+  - PatternDetector
+  - Optimizer
+  - ImprovementValidator
+  - ImprovementEngine orchestrating the full flow
+- Structured dataclass models for Pattern, ImprovementAction, ImprovementPlan, and ImprovementResult.
+- Optional loop integration in app/agent/loop_controller.py after evaluation, gated by self_improvement_enabled.
+- Deterministic memory write events for applied and rejected improvements.
+- Unit tests in tests/improvement covering analysis, detection, optimization, validation, and engine determinism.
+
+### Architecture decisions
+
+- Strict deterministic ordering at every stage via explicit sorting and threshold rules.
+- Validation is mandatory before any action can be applied, with explicit allow-lists and forbidden contract checks.
+- Improvements are bounded to safe, parameter-level targets only; core contracts and module removal are rejected.
+- Backward compatibility preserved for existing select_actions/apply call sites used by orchestration.
+- Logging contract enforced with self_improvement_applied events carrying pattern, action, and success or rejection status.
+
+### How to run
+
+- Run targeted tests:
+  - pytest -q tests/improvement
+- Run full project tests:
+  - pytest -q
+- Enable loop-level self-improvement explicitly when constructing the loop controller:
+  - build_default_loop_controller(self_improvement_enabled=True)
+
+### Dependencies
+
+- Uses existing project dependencies only.
+- No new third-party libraries introduced.
+
+### Directory tree update
+
+```text
+app/
+  improvement/
+    __init__.py
+    analyzer.py
+    engine.py
+    models.py
+    optimizer.py
+    pattern_detector.py
+    registry.py
+    validator.py
+
+tests/
+  improvement/
+    test_analyzer.py
+    test_engine.py
+    test_optimizer.py
+    test_pattern_detector.py
+    test_validator.py
+```
   implement: Implement the API
   docs: Write documentation
   test: Write and run tests
