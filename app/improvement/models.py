@@ -3,6 +3,23 @@ from datetime import datetime
 
 
 @dataclass(frozen=True)
+class ImprovementMetrics:
+    """Standardized metrics schema for deterministic impact measurement."""
+    success_rate: float
+    failure_rate: float
+    avg_step_latency: float
+    retry_rate: float
+
+
+@dataclass(frozen=True)
+class RollbackAction:
+    """Stores previous state for rollback if improvement degrades system."""
+    target: str
+    previous_value: str
+    version: int
+
+
+@dataclass(frozen=True)
 class SignalRecord:
     signal_type: str
     signal_value: str
@@ -51,6 +68,11 @@ class ImprovementRecord:
     actions: list[ImprovementAction]
     result: str
     version: int
+    rollback_actions: list[RollbackAction] = field(default_factory=list)
+    metrics_before: ImprovementMetrics | None = None
+    metrics_after: ImprovementMetrics | None = None
+    impact_score: float = 0.0
+    accepted: bool = False
 
 
 @dataclass(frozen=True)
@@ -72,5 +94,6 @@ class ImprovementResult:
     reason: str = ""
     success: bool | None = None
     impact_score: float = 0.0
-    metrics_before: dict[str, float] = field(default_factory=dict)
-    metrics_after: dict[str, float] = field(default_factory=dict)
+    metrics_before: ImprovementMetrics | None = None
+    metrics_after: ImprovementMetrics | None = None
+    rollback_applied: bool = False

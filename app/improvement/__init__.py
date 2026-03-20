@@ -3,10 +3,12 @@ from app.improvement.analyzer import ExecutionAnalyzer
 from app.improvement.models import (
     AnalysisSummary,
     ImprovementAction,
+    ImprovementMetrics,
     ImprovementPlan,
     ImprovementRecord,
     ImprovementResult,
     Pattern,
+    RollbackAction,
     SignalRecord,
 )
 from app.improvement.optimizer import Optimizer
@@ -23,6 +25,8 @@ __all__ = [
     "AnalysisSummary",
     "Pattern",
     "ImprovementAction",
+    "ImprovementMetrics",
+    "RollbackAction",
     "ImprovementPlan",
     "ImprovementRecord",
     "ImprovementResult",
