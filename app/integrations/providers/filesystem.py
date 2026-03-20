@@ -10,9 +10,6 @@ from app.integrations.base import BaseIntegration
 from app.integrations.exceptions import IntegrationExecutionError
 from app.integrations.models import IntegrationRequest, IntegrationResponse
 
-_ALLOWED_ACTIONS = frozenset({"read", "write", "list"})
-
-
 class FilesystemIntegration(BaseIntegration):
     """Perform explicit filesystem operations with deterministic controls.
 
@@ -23,9 +20,17 @@ class FilesystemIntegration(BaseIntegration):
 
     No glob expansion, no traversal helpers, no hidden auto-correction.
     All paths must be provided explicitly by the caller.
+
+    Pass ``root`` at construction to sandbox all operations inside that
+    directory.  Any path that resolves outside ``root`` (including ``../``
+    traversals or absolute escapes) is rejected before I/O is attempted.
     """
 
     name = "filesystem"
+    allowed_actions: frozenset[str] = frozenset({"read", "write", "list"})
+
+    def __init__(self, *, root: str | Path | None = None) -> None:
+        self._root: Path | None = Path(root).resolve() if root is not None else None
 
     def validate_config(self, config: dict) -> None:
         """Validate provider configuration.
@@ -39,16 +44,16 @@ class FilesystemIntegration(BaseIntegration):
 
     def execute(self, request: IntegrationRequest) -> IntegrationResponse:
         action = request.payload.get("action")
-        if action not in _ALLOWED_ACTIONS:
+        if action not in self.allowed_actions:
             raise IntegrationExecutionError(
-                f"payload.action must be one of {sorted(_ALLOWED_ACTIONS)}, got: {action!r}"
+                f"payload.action must be one of {sorted(self.allowed_actions)}, got: {action!r}"
             )
 
         path_str = request.payload.get("path")
         if not isinstance(path_str, str) or not path_str.strip():
             raise IntegrationExecutionError("payload.path must be a non-empty string")
 
-        path = Path(path_str)
+        path = self._enforce_root(Path(path_str))
 
         if action == "read":
             result_payload = self._read(path)
@@ -74,6 +79,33 @@ class FilesystemIntegration(BaseIntegration):
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _enforce_root(self, path: Path) -> Path:
+        """Resolve *path* and enforce containment within ``self._root``.
+
+        When no root is configured the path is returned unchanged.
+        Handles both relative paths (joined under root) and absolute paths
+        (must already sit inside root).  Raises ``IntegrationExecutionError``
+        on any traversal attempt rather than silently allowing I/O outside
+        the sandbox boundary.
+        """
+        if self._root is None:
+            return path
+        # Relative paths are anchored to root; absolute paths must already
+        # sit within root — Python's / operator discards the left operand
+        # when the right operand is absolute, so we get correct containment
+        # check for free.
+        if path.is_absolute():
+            resolved = path.resolve()
+        else:
+            resolved = (self._root / path).resolve()
+        try:
+            resolved.relative_to(self._root)
+        except ValueError:
+            raise IntegrationExecutionError(
+                f"path traversal blocked: {path!r} resolves outside root {self._root}"
+            ) from None
+        return resolved
 
     def _read(self, path: Path) -> dict:
         if not path.exists():

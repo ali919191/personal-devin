@@ -286,3 +286,70 @@ def test_filesystem_provider_metadata_contains_action_and_path(tmp_path: Path) -
     assert response.metadata["path"] == str(target)
     assert "timestamp" in response.metadata
 
+
+# ---------------------------------------------------------------------------
+# FilesystemIntegration — root sandboxing / path traversal tests
+# ---------------------------------------------------------------------------
+
+
+def test_filesystem_root_allows_paths_inside_sandbox(tmp_path: Path) -> None:
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    provider = FilesystemIntegration(root=str(sandbox))
+
+    # Write via relative path anchored to root
+    provider.execute(
+        make_request("filesystem", {"action": "write", "path": "safe.txt", "content": "ok"})
+    )
+    assert (sandbox / "safe.txt").read_text() == "ok"
+
+
+def test_filesystem_root_allows_absolute_path_inside_sandbox(tmp_path: Path) -> None:
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    provider = FilesystemIntegration(root=str(sandbox))
+
+    target = sandbox / "inner.txt"
+    provider.execute(
+        make_request("filesystem", {"action": "write", "path": str(target), "content": "inner"})
+    )
+    assert target.read_text() == "inner"
+
+
+def test_filesystem_root_blocks_relative_traversal(tmp_path: Path) -> None:
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    provider = FilesystemIntegration(root=str(sandbox))
+
+    with pytest.raises(IntegrationExecutionError, match="path traversal blocked"):
+        provider.execute(
+            make_request("filesystem", {"action": "read", "path": "../../etc/passwd"})
+        )
+
+
+def test_filesystem_root_blocks_absolute_escape(tmp_path: Path) -> None:
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    # Create a file outside the sandbox to attempt to read it
+    outside = tmp_path / "secret.txt"
+    outside.write_text("secret")
+    provider = FilesystemIntegration(root=str(sandbox))
+
+    with pytest.raises(IntegrationExecutionError, match="path traversal blocked"):
+        provider.execute(
+            make_request("filesystem", {"action": "read", "path": str(outside)})
+        )
+
+
+def test_filesystem_root_blocks_normalised_traversal(tmp_path: Path) -> None:
+    """Normalised paths like 'sub/../../outside' must also be rejected."""
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    (sandbox / "sub").mkdir()
+    provider = FilesystemIntegration(root=str(sandbox))
+
+    with pytest.raises(IntegrationExecutionError, match="path traversal blocked"):
+        provider.execute(
+            make_request("filesystem", {"action": "list", "path": "sub/../../"})
+        )
+
