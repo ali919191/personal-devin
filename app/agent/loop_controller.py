@@ -67,7 +67,26 @@ class PlanningEngine:
                     },
                 }
             ]
-        return build_execution_plan(tasks)
+
+        execution_plan = build_execution_plan(tasks)
+        steps = [
+            {
+                "id": node.id,
+                "action": node.description,
+                "dependencies": list(node.dependencies),
+                "metadata": self._safe_task_metadata(node.metadata),
+            }
+            for node in execution_plan.ordered_tasks
+        ]
+        return {
+            "steps": steps,
+            "current_step": 0,
+        }
+
+    def _safe_task_metadata(self, metadata: Any) -> dict[str, Any]:
+        if isinstance(metadata, dict):
+            return dict(metadata)
+        return {}
 
 
 class ExecutionRunner:
@@ -137,7 +156,8 @@ class ExecutionRunner:
         }
 
     def _execute_with_existing_runner(self, request: dict[str, Any]) -> dict[str, Any]:
-        plan = request.get("plan")
+        raw_plan = request.get("plan")
+        plan = self._normalize_plan_for_runner(raw_plan)
         report = run_plan(plan)
         status = str(report.status.value)
         payload = {
@@ -152,6 +172,40 @@ class ExecutionRunner:
             "completed_at": report.completed_at.isoformat() if report.completed_at else None,
         }
         return payload
+
+    def _normalize_plan_for_runner(self, raw_plan: Any) -> Any:
+        if hasattr(raw_plan, "ordered_tasks"):
+            return raw_plan
+
+        if isinstance(raw_plan, dict) and "action" in raw_plan:
+            return self._single_step_to_execution_plan(raw_plan)
+
+        if isinstance(raw_plan, dict) and isinstance(raw_plan.get("steps"), list):
+            steps = raw_plan.get("steps")
+            current_index = int(raw_plan.get("current_step", 0))
+            if 0 <= current_index < len(steps):
+                selected = steps[current_index]
+                if isinstance(selected, dict):
+                    return self._single_step_to_execution_plan(selected)
+
+        raise ValueError("Unsupported plan format for execution runner")
+
+    def _single_step_to_execution_plan(self, step: dict[str, Any]) -> Any:
+        step_id = str(step.get("id", "step_1"))
+        action = str(step.get("action", "execute_step"))
+        metadata = step.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+
+        tasks = [
+            {
+                "id": step_id,
+                "description": action,
+                "dependencies": [],
+                "metadata": dict(metadata),
+            }
+        ]
+        return build_execution_plan(tasks)
 
 
 class FileMemoryStore:
@@ -175,7 +229,7 @@ class FileMemoryStore:
         }
 
 
-Decision = Literal["retry_same", "adjust_plan", "abort", "escalate"]
+Decision = Literal["retry_same", "adjust_plan", "abort", "escalate", "advance_step"]
 
 
 class LoopController:
@@ -210,6 +264,9 @@ class LoopController:
             "goal": goal,
             "history": [],
             "memory_context": context,
+            "active_plan": None,
+            "step_history": [],
+            "current_step_failures": {},
             "attempt_count": 0,
             "last_failure_reason": None,
             "last_error_type": None,
@@ -232,21 +289,40 @@ class LoopController:
 
             # 1. PLAN
             state["attempt_count"] = iteration
-            plan = self._create_plan(state, context)
+            plan = self._ensure_step_plan(state, context)
+            current_step = self._current_step(plan)
+
+            if current_step is None:
+                self._log_event(
+                    event="all_steps_completed",
+                    iteration_id=iteration_id,
+                    input_payload={"plan": plan},
+                    output_payload={"status": "success"},
+                    decision="stop_success",
+                )
+                return {
+                    "status": "success",
+                    "iterations": iteration - 1,
+                    "result": {
+                        "success": True,
+                        "steps_completed": len(plan.get("steps", [])) if isinstance(plan, dict) else 0,
+                    },
+                }
+
             self._log_event(
                 event="plan_generated",
                 iteration_id=iteration_id,
                 input_payload={"state": self._state_snapshot(state), "context": context},
-                output_payload=self._safe_payload(plan),
+                output_payload={"plan": self._safe_payload(plan), "current_step": current_step},
                 decision="execute",
             )
 
-            # 2. EXECUTE
-            result = self.executor.run(plan)
+            # 2. EXECUTE (step-level)
+            result = self.executor.run(current_step)
             self._log_event(
                 event="plan_executed",
                 iteration_id=iteration_id,
-                input_payload=self._safe_payload(plan),
+                input_payload={"current_step": self._safe_payload(current_step)},
                 output_payload=result,
                 decision="evaluate",
             )
@@ -265,12 +341,17 @@ class LoopController:
                 decision="persist_memory",
             )
 
-            # 4. DECISION
-            decision = self._decide_next_step(state, classification)
+            strategy_pattern = str(classification.get("error_type", "none"))
+            if success:
+                decision = "advance_step"
+                self._advance_step(plan, state)
+            else:
+                self._increment_step_failure(state, current_step)
+                decision = self._decide_next_step(state, classification)
+
             state["last_decision"] = decision
             state["strategy_hint"] = self._build_strategy_hint(decision, classification)
 
-            strategy_pattern = str(classification.get("error_type", "none"))
             self._update_strategy_stats(
                 pattern=strategy_pattern,
                 decision=decision,
@@ -283,6 +364,7 @@ class LoopController:
                 "timestamp": self._clock().isoformat(),
                 "goal": goal,
                 "plan": self._safe_payload(plan),
+                "current_step": self._safe_payload(current_step),
                 "result": result,
                 "classification": classification,
                 "success": success,
@@ -304,14 +386,23 @@ class LoopController:
             state["history"].append(
                 {
                     "plan": self._safe_payload(plan),
+                    "current_step": self._safe_payload(current_step),
                     "result": result,
                     "classification": classification,
                     "decision": decision,
                     "strategy_hint": state["strategy_hint"],
                 }
             )
+            state["step_history"].append(
+                {
+                    "step": self._safe_payload(current_step),
+                    "result": result,
+                    "decision": decision,
+                    "timestamp": self._clock().isoformat(),
+                }
+            )
 
-            if success and decision == "abort":
+            if success and self._all_steps_completed(plan):
                 self._log_event(
                     event="goal_achieved",
                     iteration_id=iteration_id,
@@ -322,8 +413,23 @@ class LoopController:
                 return {
                     "status": "success",
                     "iterations": iteration,
-                    "result": result,
+                    "result": {
+                        **result,
+                        "steps_completed": len(plan.get("steps", [])) if isinstance(plan, dict) else 0,
+                    },
                 }
+
+            if success:
+                context = self._retrieve_context(goal)
+                state["memory_context"] = context
+                self._log_event(
+                    event="continue_next_step",
+                    iteration_id=iteration_id,
+                    input_payload={"decision": decision, "next_step": plan.get("current_step", 0)},
+                    output_payload={"next_iteration": iteration + 1},
+                    decision="repeat",
+                )
+                continue
 
             failures += 1
 
@@ -356,6 +462,9 @@ class LoopController:
                     "reason": "abort",
                     "error_type": classification.get("error_type"),
                 }
+
+            if decision == "adjust_plan":
+                self._apply_step_adjustment(plan, state)
 
             if failures >= self.failure_threshold:
                 self._log_event(
@@ -393,6 +502,137 @@ class LoopController:
             "iterations": iteration,
             "reason": "max_iterations",
         }
+
+    def _ensure_step_plan(self, state: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+        active = state.get("active_plan")
+        if isinstance(active, dict) and isinstance(active.get("steps"), list):
+            if state.get("last_decision") == "adjust_plan":
+                raw_plan = self._create_plan(state, context)
+                active = self._normalize_step_plan(raw_plan, fallback=active)
+                state["active_plan"] = active
+                return active
+            return active
+
+        raw_plan = self._create_plan(state, context)
+        active = self._normalize_step_plan(raw_plan)
+        state["active_plan"] = active
+        return active
+
+    def _normalize_step_plan(
+        self,
+        raw_plan: Any,
+        fallback: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if isinstance(raw_plan, dict) and isinstance(raw_plan.get("steps"), list):
+            steps = [self._normalize_step(step, index) for index, step in enumerate(raw_plan["steps"])]
+            current = int(raw_plan.get("current_step", 0))
+            if current < 0:
+                current = 0
+            if current > len(steps):
+                current = len(steps)
+            return {"steps": steps, "current_step": current}
+
+        if hasattr(raw_plan, "ordered_tasks"):
+            steps: list[dict[str, Any]] = []
+            for index, task in enumerate(getattr(raw_plan, "ordered_tasks", [])):
+                step = {
+                    "id": str(getattr(task, "id", f"step_{index + 1}")),
+                    "action": str(getattr(task, "description", f"step_{index + 1}")),
+                    "dependencies": list(getattr(task, "dependencies", [])),
+                    "metadata": dict(getattr(task, "metadata", {}) or {}),
+                }
+                steps.append(self._normalize_step(step, index))
+            return {"steps": steps, "current_step": 0}
+
+        if isinstance(raw_plan, dict):
+            step = self._normalize_step(raw_plan, 0)
+            return {"steps": [step], "current_step": 0}
+
+        if fallback is not None:
+            return {
+                "steps": [self._normalize_step(step, idx) for idx, step in enumerate(fallback.get("steps", []))],
+                "current_step": int(fallback.get("current_step", 0)),
+            }
+
+        return {
+            "steps": [self._normalize_step({"id": "step_1", "action": str(raw_plan)}, 0)],
+            "current_step": 0,
+        }
+
+    def _normalize_step(self, step: Any, index: int) -> dict[str, Any]:
+        if not isinstance(step, dict):
+            return {
+                "id": f"step_{index + 1}",
+                "action": str(step),
+                "metadata": {},
+            }
+
+        step_id = str(step.get("id", f"step_{index + 1}"))
+        action = str(step.get("action") or step.get("description") or f"step_{index + 1}")
+        metadata = step.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+        dependencies = step.get("dependencies")
+        if not isinstance(dependencies, list):
+            dependencies = []
+
+        return {
+            "id": step_id,
+            "action": action,
+            "dependencies": [str(value) for value in dependencies],
+            "metadata": dict(metadata),
+        }
+
+    def _current_step(self, plan: dict[str, Any]) -> dict[str, Any] | None:
+        steps = plan.get("steps")
+        if not isinstance(steps, list):
+            return None
+        index = int(plan.get("current_step", 0))
+        if index < 0 or index >= len(steps):
+            return None
+        step = steps[index]
+        if not isinstance(step, dict):
+            return None
+        return step
+
+    def _all_steps_completed(self, plan: dict[str, Any]) -> bool:
+        steps = plan.get("steps")
+        if not isinstance(steps, list):
+            return False
+        index = int(plan.get("current_step", 0))
+        return index >= len(steps)
+
+    def _advance_step(self, plan: dict[str, Any], state: dict[str, Any]) -> None:
+        current = int(plan.get("current_step", 0))
+        plan["current_step"] = current + 1
+        if state.get("current_step_failures") is None or not isinstance(
+            state.get("current_step_failures"), dict
+        ):
+            state["current_step_failures"] = {}
+
+    def _increment_step_failure(self, state: dict[str, Any], step: dict[str, Any] | None) -> None:
+        key = "unknown_step"
+        if isinstance(step, dict):
+            key = str(step.get("id", "unknown_step"))
+        failures = state.get("current_step_failures")
+        if not isinstance(failures, dict):
+            failures = {}
+            state["current_step_failures"] = failures
+        failures[key] = int(failures.get(key, 0)) + 1
+
+    def _apply_step_adjustment(self, plan: dict[str, Any], state: dict[str, Any]) -> None:
+        step = self._current_step(plan)
+        if not isinstance(step, dict):
+            return
+        action = str(step.get("action", "execute_step"))
+        if "[adjusted]" in action:
+            return
+        step["action"] = f"{action} [adjusted]"
+        metadata = step.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+        metadata["strategy_hint"] = state.get("strategy_hint", "none")
+        step["metadata"] = metadata
 
     def _retrieve_context(self, goal: str) -> dict[str, Any]:
         if hasattr(self.memory, "retrieve"):
@@ -648,6 +888,8 @@ class LoopController:
         pattern = str(classification.get("error_type", "runtime_error"))
         if decision == "adjust_plan":
             return f"avoid_previous_plan_pattern:{pattern}"
+        if decision == "advance_step":
+            return "advance_to_next_step"
         if decision == "retry_same":
             return f"retry_with_same_plan:{pattern}"
         if decision == "escalate":
@@ -693,6 +935,12 @@ class LoopController:
     def _state_snapshot(self, state: dict[str, Any]) -> dict[str, Any]:
         history = state.get("history", [])
         memory_context = state.get("memory_context", [])
+        active_plan = state.get("active_plan")
+        current_step = None
+        if isinstance(active_plan, dict):
+            current_step = active_plan.get("current_step")
+        step_history = state.get("step_history", [])
+        current_step_failures = state.get("current_step_failures", {})
         return {
             "goal": str(state.get("goal", "")),
             "attempt_count": int(state.get("attempt_count", 0)),
@@ -702,6 +950,9 @@ class LoopController:
             "last_decision": state.get("last_decision"),
             "strategy_hint": state.get("strategy_hint"),
             "history_size": len(history) if isinstance(history, list) else 0,
+            "step_history_size": len(step_history) if isinstance(step_history, list) else 0,
+            "current_step": int(current_step) if isinstance(current_step, int) else 0,
+            "current_step_failures": self._safe_payload(current_step_failures),
             "memory_context_size": len(memory_context.get("recent", []))
             if isinstance(memory_context, dict)
             else 0,

@@ -24,6 +24,17 @@ class MockPlannerWithContext:
         }
 
 
+class MultiStepPlanner:
+    def create_plan(self, state, context=None):
+        return {
+            "steps": [
+                {"id": "s1", "action": "collect data"},
+                {"id": "s2", "action": "apply changes"},
+            ],
+            "current_step": 0,
+        }
+
+
 class MockExecutor:
     def __init__(self, succeed_on=2):
         self.counter = 0
@@ -81,7 +92,7 @@ def test_loop_success():
     assert result["iterations"] == 2
     assert len(memory.data) == 2
     assert memory.data[0]["decision"] == "retry_same"
-    assert memory.data[1]["decision"] == "abort"
+    assert memory.data[1]["decision"] == "advance_step"
 
 
 def test_loop_failure_threshold():
@@ -235,3 +246,55 @@ def test_retry_same_confidence_downgrades_after_repeated_failures():
     ]
     if retry_rows:
         assert retry_rows[0]["confidence"] < 1.0
+
+
+def test_loop_completes_all_steps_before_success():
+    memory = MockMemory()
+    controller = LoopController(
+        planner=MultiStepPlanner(),
+        executor=SequenceExecutor(
+            [
+                {"success": True},
+                {"success": True},
+            ]
+        ),
+        memory=memory,
+        max_iterations=5,
+        failure_threshold=3,
+    )
+
+    result = controller.run("test goal")
+
+    assert result["status"] == "success"
+    assert result["iterations"] == 2
+    assert result["result"]["steps_completed"] == 2
+    assert memory.data[0]["current_step"]["id"] == "s1"
+    assert memory.data[1]["current_step"]["id"] == "s2"
+    assert memory.data[0]["decision"] == "advance_step"
+    assert memory.data[1]["decision"] == "advance_step"
+
+
+def test_loop_tracks_current_step_failures():
+    memory = MockMemory()
+    controller = LoopController(
+        planner=MultiStepPlanner(),
+        executor=SequenceExecutor(
+            [
+                {"success": False, "error_type": "runtime_error", "retryable": True},
+                {"success": True},
+                {"success": True},
+            ]
+        ),
+        memory=memory,
+        max_iterations=6,
+        failure_threshold=4,
+    )
+
+    result = controller.run("test goal")
+
+    assert result["status"] == "success"
+    assert memory.data[0]["current_step"]["id"] == "s1"
+    assert memory.data[0]["decision"] in {"retry_same", "adjust_plan"}
+    assert memory.data[1]["current_step"]["id"] == "s1"
+    assert memory.data[1]["decision"] == "advance_step"
+    assert memory.data[2]["current_step"]["id"] == "s2"
