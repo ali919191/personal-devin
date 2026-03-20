@@ -293,6 +293,24 @@ Total tasks: 4
 
 - None beyond what Agent 01 already uses (standard library only for graph logic).
 
+## Agent 31 — Loop Controller
+
+### What was built
+Deterministic orchestration loop that connects planning, execution, and memory.
+
+### Architecture decisions
+- Sequential loop (no async)
+- Explicit state tracking
+- Failure + stop conditions enforced
+
+### How to run
+Instantiate LoopController and call `.run(goal)`
+
+### Dependencies
+- PlanningEngine
+- ExecutionRunner
+- MemoryStore
+
 ## Agent 17 — Agent Loop Optimization
 
 ### What was built
